@@ -1,0 +1,38 @@
+# Spherical Robot Pi5 Dependencies
+
+# Web framework
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.0.0
+
+# Serial communication
+pyserial>=3.5
+
+# Computer vision
+opencv-python>=4.9.0
+Pillow>=10.2.0
+
+# Audio processing
+pyalsaaudio>=0.10.0
+numpy>=1.26.0
+
+# WebSocket support (included with uvicorn[standard])
+websockets>=12.0
+
+# Async support
+anyio>=4.2.0
+
+# Machine learning - choose ONE based on your platform:
+#
+# Option 1: For Raspberry Pi 5 with Python 3.11 (recommended)
+#   Switch to Python 3.11: sudo apt install python3.11 python3.11-venv
+#   Then: pip install tflite-runtime
+#
+# Option 2: Full TensorFlow (large, ~500MB, works on most platforms)
+#   pip install tensorflow
+#
+# Option 3: Skip ML features (gesture/sound detection will use basic fallbacks)
+#   No additional packages needed
+#
+# Optional: MediaPipe for gesture detection (x86/x64 only, not ARM)
+# mediapipe>=0.10.9

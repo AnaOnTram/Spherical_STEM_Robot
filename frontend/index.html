@@ -1,0 +1,1913 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spherical Robot Control Panel</title>
+    <!-- HLS.js for cross-browser HLS playback -->
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 20px;
+            color: #00d4ff;
+        }
+
+        .connection-bar {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #16213e;
+            border-radius: 10px;
+            align-items: center;
+        }
+
+        .connection-bar input {
+            flex: 1;
+            padding: 10px;
+            border: none;
+            border-radius: 5px;
+            background: #0f0f23;
+            color: #fff;
+            font-size: 14px;
+        }
+
+        .connection-bar button {
+            padding: 10px 20px;
+        }
+
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #ff4444;
+        }
+
+        .status-indicator.connected {
+            background: #44ff44;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+        }
+
+        .card {
+            background: #16213e;
+            border-radius: 10px;
+            padding: 20px;
+        }
+
+        .card h2 {
+            color: #00d4ff;
+            margin-bottom: 15px;
+            font-size: 18px;
+            border-bottom: 1px solid #0f3460;
+            padding-bottom: 10px;
+        }
+
+        button {
+            background: #0f3460;
+            color: #fff;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background: #1a5490;
+        }
+
+        button:active {
+            background: #0a2540;
+        }
+
+        button.danger {
+            background: #d32f2f;
+        }
+
+        button.danger:hover {
+            background: #f44336;
+        }
+
+        button.success {
+            background: #2e7d32;
+        }
+
+        button.success:hover {
+            background: #4caf50;
+        }
+
+        .button-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        /* Movement Controls */
+        .movement-pad {
+            display: grid;
+            grid-template-columns: repeat(3, 60px);
+            grid-template-rows: repeat(3, 60px);
+            gap: 5px;
+            justify-content: center;
+            margin: 20px 0;
+        }
+
+        .movement-pad button {
+            width: 60px;
+            height: 60px;
+            font-size: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .movement-pad .center {
+            background: #d32f2f;
+        }
+
+        .speed-control {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .speed-control input[type="range"] {
+            flex: 1;
+        }
+
+        .speed-control span {
+            min-width: 50px;
+        }
+
+        /* Video Stream */
+        .video-container {
+            background: #000;
+            border-radius: 5px;
+            overflow: hidden;
+            aspect-ratio: 4/3;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .video-container img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        .video-container .placeholder {
+            color: #666;
+        }
+
+        /* Display Control */
+        .display-preview {
+            background: #fff;
+            color: #000;
+            padding: 20px;
+            border-radius: 5px;
+            min-height: 100px;
+            margin-bottom: 15px;
+            font-family: monospace;
+        }
+
+        textarea {
+            width: 100%;
+            padding: 10px;
+            border: none;
+            border-radius: 5px;
+            background: #0f0f23;
+            color: #fff;
+            font-size: 14px;
+            resize: vertical;
+            min-height: 80px;
+            margin-bottom: 10px;
+        }
+
+        select {
+            padding: 10px;
+            border: none;
+            border-radius: 5px;
+            background: #0f0f23;
+            color: #fff;
+            font-size: 14px;
+        }
+
+        /* Status Panel */
+        .status-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        .status-item {
+            background: #0f0f23;
+            padding: 10px;
+            border-radius: 5px;
+        }
+
+        .status-item label {
+            display: block;
+            font-size: 12px;
+            color: #888;
+            margin-bottom: 5px;
+        }
+
+        .status-item .value {
+            font-size: 14px;
+            font-weight: bold;
+        }
+
+        .status-item .value.ok {
+            color: #44ff44;
+        }
+
+        .status-item .value.error {
+            color: #ff4444;
+        }
+
+        /* Log Panel */
+        .log-panel {
+            background: #0f0f23;
+            border-radius: 5px;
+            padding: 10px;
+            height: 200px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+        }
+
+        .log-entry {
+            padding: 3px 0;
+            border-bottom: 1px solid #1a1a2e;
+        }
+
+        .log-entry.error {
+            color: #ff4444;
+        }
+
+        .log-entry.success {
+            color: #44ff44;
+        }
+
+        .log-entry .timestamp {
+            color: #666;
+            margin-right: 10px;
+        }
+
+        /* Audio Controls */
+        .audio-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .audio-controls input[type="number"] {
+            width: 80px;
+            padding: 8px;
+            border: none;
+            border-radius: 5px;
+            background: #0f0f23;
+            color: #fff;
+        }
+
+        /* WhatsApp-style Voice Recorder */
+        .voice-recorder-container {
+            background: #0f0f23;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+
+        .voice-recorder {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .voice-record-btn {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            border: none;
+            background: #25d366;
+            color: white;
+            font-size: 24px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 2px 10px rgba(37, 211, 102, 0.3);
+        }
+
+        .voice-record-btn:hover {
+            background: #128c7e;
+            transform: scale(1.05);
+        }
+
+        .voice-record-btn:active {
+            transform: scale(0.95);
+        }
+
+        .voice-record-btn.recording {
+            background: #ff4444;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(255, 68, 68, 0.7); }
+            70% { box-shadow: 0 0 0 15px rgba(255, 68, 68, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(255, 68, 68, 0); }
+        }
+
+        .recording-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .recording-dot {
+            width: 12px;
+            height: 12px;
+            background: #ff4444;
+            border-radius: 50%;
+            animation: blink 1s infinite;
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        .recording-time {
+            color: #ff4444;
+            font-weight: bold;
+            font-family: monospace;
+        }
+
+        .record-hint {
+            color: #888;
+            font-size: 14px;
+        }
+
+        /* File Upload Section */
+        .file-upload-section {
+            margin-bottom: 15px;
+        }
+
+        .upload-buttons {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .upload-btn {
+            background: #0f3460;
+            color: #fff;
+            padding: 10px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .upload-btn:hover {
+            background: #1a5490;
+        }
+
+        .upload-btn-secondary {
+            background: #16213e;
+            color: #fff;
+            border: 1px solid #0f3460;
+            padding: 10px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        .upload-btn-secondary:hover {
+            background: #0f3460;
+        }
+
+        .upload-status {
+            margin-top: 10px;
+            padding: 8px;
+            border-radius: 5px;
+            font-size: 13px;
+            display: none;
+        }
+
+        .upload-status.success {
+            display: block;
+            background: rgba(46, 125, 50, 0.3);
+            color: #4caf50;
+        }
+
+        .upload-status.error {
+            display: block;
+            background: rgba(211, 47, 47, 0.3);
+            color: #f44336;
+        }
+
+        .upload-status.uploading {
+            display: block;
+            background: rgba(15, 52, 96, 0.3);
+            color: #00d4ff;
+        }
+
+        /* Playback Status */
+        .playback-status {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: #0f0f23;
+            padding: 10px 15px;
+            border-radius: 5px;
+            margin-top: 10px;
+        }
+
+        .playback-status span {
+            color: #888;
+        }
+
+        .stop-btn {
+            background: #d32f2f;
+            color: #fff;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .stop-btn:hover {
+            background: #f44336;
+        }
+
+        /* WebSocket Events */
+        .event-list {
+            max-height: 150px;
+            overflow-y: auto;
+            background: #0f0f23;
+            border-radius: 5px;
+            padding: 10px;
+        }
+
+        .event-item {
+            font-size: 12px;
+            padding: 5px;
+            border-bottom: 1px solid #1a1a2e;
+        }
+
+        .event-item .type {
+            color: #00d4ff;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🤖 Spherical Robot Control Panel</h1>
+
+        <!-- Connection Bar -->
+        <div class="connection-bar">
+            <div class="status-indicator" id="connectionStatus"></div>
+            <input type="text" id="apiHost" placeholder="e.g., 192.168.1.18:8000" value="">
+            <button onclick="connect()">Connect</button>
+            <button onclick="disconnect()">Disconnect</button>
+            <button onclick="refreshStatus()">Refresh Status</button>
+        </div>
+
+        <div class="grid">
+            <!-- Movement Control -->
+            <div class="card">
+                <h2>🎮 Movement Control</h2>
+                <div class="movement-pad">
+                    <div></div>
+                    <button onmousedown="move(0, 1)" onmouseup="stopMotors()" ontouchstart="move(0, 1)" ontouchend="stopMotors()">↑</button>
+                    <div></div>
+                    <button onmousedown="move(-1, 0)" onmouseup="stopMotors()" ontouchstart="move(-1, 0)" ontouchend="stopMotors()">←</button>
+                    <button class="center danger" onclick="stopMotors()">⏹</button>
+                    <button onmousedown="move(1, 0)" onmouseup="stopMotors()" ontouchstart="move(1, 0)" ontouchend="stopMotors()">→</button>
+                    <div></div>
+                    <button onmousedown="move(0, -1)" onmouseup="stopMotors()" ontouchstart="move(0, -1)" ontouchend="stopMotors()">↓</button>
+                    <div></div>
+                </div>
+                <div class="button-group">
+                    <button onmousedown="move(-1, 1)" onmouseup="stopMotors()">↶ Spin Left</button>
+                    <button onmousedown="move(1, -1)" onmouseup="stopMotors()">↷ Spin Right</button>
+                </div>
+                <div class="speed-control">
+                    <label>Speed:</label>
+                    <input type="range" id="speedSlider" min="50" max="255" value="150">
+                    <span id="speedValue">150</span>
+                </div>
+            </div>
+
+            <!-- Video & Audio Stream -->
+            <div class="card">
+                <h2>📹 Video & Audio Monitor</h2>
+
+                <!-- HLS Stream (H.264 + AAC) -->
+                <div style="margin-bottom: 15px;">
+                    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                        <span>🎬 HLS Stream (Video + Audio):</span>
+                        <span id="hlsStatus" style="color: #888;">Stopped</span>
+                    </div>
+                    <video id="hlsVideo" controls playsinline style="width: 100%; background: #000; border-radius: 5px; display: none;"></video>
+                    <div class="video-container" id="hlsPlaceholder">
+                        <span class="placeholder">Click Start HLS for combined video+audio</span>
+                    </div>
+                    <div class="button-group" style="margin-top: 10px;">
+                        <button class="success" onclick="startHLS()">▶ Start HLS</button>
+                        <button class="danger" onclick="stopHLS()">⏹ Stop HLS</button>
+                    </div>
+                </div>
+
+                <div style="border-top: 1px solid #0f3460; padding-top: 15px;">
+                    <details>
+                        <summary style="cursor: pointer; color: #888;">Legacy Streams (MJPEG / WebSocket Audio)</summary>
+                        <div style="margin-top: 15px;">
+                            <div class="video-container">
+                                <img id="videoStream" style="display:none;">
+                                <span class="placeholder" id="videoPlaceholder">MJPEG video only</span>
+                            </div>
+                            <div class="button-group" style="margin-top: 10px;">
+                                <button onclick="startVideo()">▶ MJPEG</button>
+                                <button onclick="stopVideo()">⏹ MJPEG</button>
+                                <button onclick="takeSnapshot()">📷 Snapshot</button>
+                            </div>
+                            <div style="margin-top: 15px;">
+                                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                                    <span>🎤 WebSocket Audio:</span>
+                                    <span id="audioStreamStatus" style="color: #888;">Stopped</span>
+                                </div>
+                                <div class="button-group">
+                                    <button onclick="startAudioStream()">▶ Audio</button>
+                                    <button onclick="stopAudioStream()">⏹ Audio</button>
+                                </div>
+                                <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; margin-top: 10px;">
+                                    <input type="checkbox" id="muteAudio" onchange="toggleMute()">
+                                    <span>Mute audio</span>
+                                </label>
+                            </div>
+                        </div>
+                    </details>
+                </div>
+            </div>
+
+            <!-- System Status -->
+            <div class="card">
+                <h2>📊 System Status</h2>
+                <div class="status-grid">
+                    <div class="status-item">
+                        <label>ESP32 Connection</label>
+                        <div class="value" id="esp32Status">--</div>
+                    </div>
+                    <div class="status-item">
+                        <label>Video</label>
+                        <div class="value" id="videoStatus">--</div>
+                    </div>
+                    <div class="status-item">
+                        <label>Audio</label>
+                        <div class="value" id="audioStatus">--</div>
+                    </div>
+                    <div class="status-item">
+                        <label>Alarm State</label>
+                        <div class="value" id="alarmStatus">--</div>
+                    </div>
+                </div>
+                <div class="button-group" style="margin-top: 15px;">
+                    <button onclick="pingESP32()">🏓 Ping ESP32</button>
+                    <button onclick="resetESP32()">🔄 Reset ESP32</button>
+                </div>
+            </div>
+
+            <!-- E-Ink Display -->
+            <div class="card">
+                <h2>🖼 E-Ink Display</h2>
+                <div class="display-preview" id="displayPreview">
+                    Display preview will appear here
+                </div>
+                
+                <!-- Image Upload Section -->
+                <div class="image-upload-section" style="margin-bottom: 15px;">
+                    <div class="upload-area" id="displayUploadArea" onclick="document.getElementById('displayImageInput').click()" 
+                         style="border: 2px dashed #0f3460; border-radius: 5px; padding: 20px; text-align: center; cursor: pointer; transition: all 0.3s;">
+                        <div style="font-size: 32px; margin-bottom: 5px;">📷</div>
+                        <div style="color: #888; font-size: 13px;">
+                            Click to upload image<br>
+                            <small>400x300 B&W, 15000 bytes</small>
+                        </div>
+                    </div>
+                    <input type="file" id="displayImageInput" accept="image/*" onchange="handleDisplayImageUpload(this)" style="display: none;">
+                    <img id="displayImagePreview" style="max-width: 100%; border-radius: 5px; margin-top: 10px; display: none;">
+                    <div class="upload-status" id="displayUploadStatus"></div>
+                </div>
+                
+                <textarea id="displayText" placeholder="Enter text to display...">Hello World!</textarea>
+                <div class="button-group">
+                    <button onclick="sendDisplayText()">📝 Send Text</button>
+                    <button onclick="clearDisplay()">🧹 Clear</button>
+                </div>
+                <div class="button-group">
+                    <label>Pattern:</label>
+                    <select id="patternSelect">
+                        <option value="checkerboard">Checkerboard</option>
+                        <option value="gradient">Gradient</option>
+                        <option value="border">Border</option>
+                    </select>
+                    <button onclick="sendPattern()">Send Pattern</button>
+                </div>
+            </div>
+
+            <!-- Audio Control - WhatsApp Style -->
+            <div class="card">
+                <h2>🔊 Audio Messages</h2>
+                
+                <!-- Voice Recording Section -->
+                <div class="voice-recorder-container">
+                    <div class="voice-recorder" id="voiceRecorder">
+                        <button class="voice-record-btn" id="recordBtn" onmousedown="startRecording()" onmouseup="stopRecording()" ontouchstart="startRecording()" ontouchend="stopRecording()">
+                            <span class="mic-icon">🎤</span>
+                        </button>
+                        <div class="recording-indicator" id="recordingIndicator" style="display: none;">
+                            <span class="recording-dot"></span>
+                            <span class="recording-time" id="recordingTime">0:00</span>
+                        </div>
+                        <span class="record-hint" id="recordHint">Hold to record</span>
+                    </div>
+                </div>
+
+                <!-- File Upload Section -->
+                <div class="file-upload-section">
+                    <div class="upload-buttons">
+                        <label class="upload-btn">
+                            <input type="file" id="audioFileInput" accept=".mp3,.wav,.ogg,.m4a" onchange="uploadAudioFile(this)" style="display: none;">
+                            <span>📁 Upload Audio</span>
+                        </label>
+                        <button onclick="document.getElementById('audioFileInput').click()" class="upload-btn-secondary">
+                            🎵 MP3/WAV
+                        </button>
+                    </div>
+                    <div class="upload-status" id="uploadStatus"></div>
+                </div>
+
+                <!-- Playback Status -->
+                <div class="playback-status" id="playbackStatus">
+                    <span id="playbackText">Ready to play</span>
+                    <button onclick="stopAudioPlayback()" class="stop-btn" id="stopPlaybackBtn" style="display: none;">⏹ Stop</button>
+                </div>
+
+                <!-- Debug Tone (keep for testing) -->
+                <details style="margin-top: 15px;">
+                    <summary style="cursor: pointer; color: #888; font-size: 12px;">Debug: Test Tone</summary>
+                    <div style="margin-top: 10px;">
+                        <div class="audio-controls">
+                            <label>Freq:</label>
+                            <input type="number" id="toneFreq" value="440" min="100" max="2000" style="width: 60px;">
+                            <label>Hz</label>
+                            <label>Dur:</label>
+                            <input type="number" id="toneDuration" value="1" min="0.1" max="10" step="0.1" style="width: 50px;">
+                            <label>s</label>
+                        </div>
+                        <div class="button-group" style="margin-top: 5px;">
+                            <button onclick="playTone()">🎵 Play Tone</button>
+                        </div>
+                    </div>
+                </details>
+            </div>
+
+            <!-- Alarm Control -->
+            <div class="card">
+                <h2>🚨 Alarm Control</h2>
+                <div class="button-group">
+                    <button class="success" onclick="enableAlarm()">✓ Enable Monitoring</button>
+                    <button class="danger" onclick="disableAlarm()">✗ Disable</button>
+                    <button onclick="acknowledgeAlarm()">👍 Acknowledge</button>
+                    <button onclick="testAlarm()">🔔 Test Alarm</button>
+                </div>
+            </div>
+
+            <!-- WebSocket Events -->
+            <div class="card">
+                <h2>📡 Live Events (WebSocket)</h2>
+                <div class="button-group">
+                    <button onclick="connectWebSocket()">Connect WS</button>
+                    <button onclick="disconnectWebSocket()">Disconnect WS</button>
+                </div>
+                <div class="event-list" id="eventList">
+                    <div class="event-item">Waiting for events...</div>
+                </div>
+            </div>
+
+            <!-- Log Panel -->
+            <div class="card">
+                <h2>📋 API Log</h2>
+                <div class="log-panel" id="logPanel"></div>
+                <button onclick="clearLog()" style="margin-top: 10px;">Clear Log</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // State
+        let apiBase = '';
+        let ws = null;
+        let isConnected = false;
+
+        console.log('Spherical Robot Control Panel loaded');
+
+        // Elements
+        const speedSlider = document.getElementById('speedSlider');
+        const speedValue = document.getElementById('speedValue');
+
+        if (speedSlider) {
+            speedSlider.addEventListener('input', () => {
+                speedValue.textContent = speedSlider.value;
+            });
+        }
+
+        // Logging
+        function log(message, type = 'info') {
+            console.log(`[${type}] ${message}`);
+            const logPanel = document.getElementById('logPanel');
+            if (!logPanel) {
+                console.error('logPanel not found!');
+                return;
+            }
+            const timestamp = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.innerHTML = `<span class="timestamp">${timestamp}</span>${message}`;
+            logPanel.appendChild(entry);
+            logPanel.scrollTop = logPanel.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('logPanel').innerHTML = '';
+        }
+
+        // API Calls
+        async function apiCall(endpoint, method = 'GET', body = null) {
+            if (!apiBase) {
+                log('Not connected to robot', 'error');
+                return null;
+            }
+
+            const url = `http://${apiBase}${endpoint}`;
+            const options = {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+            };
+
+            if (body) {
+                options.body = JSON.stringify(body);
+            }
+
+            try {
+                log(`${method} ${endpoint}`);
+                const response = await fetch(url, options);
+                const data = await response.json();
+                log(`Response: ${JSON.stringify(data)}`, response.ok ? 'success' : 'error');
+                return data;
+            } catch (error) {
+                log(`Error: ${error.message}`, 'error');
+                return null;
+            }
+        }
+
+        // Connection
+        function connect() {
+            console.log('Connect button clicked');
+            apiBase = document.getElementById('apiHost').value;
+            console.log('apiBase:', apiBase);
+            if (!apiBase) {
+                log('Please enter robot IP:Port', 'error');
+                return;
+            }
+            log(`Connecting to ${apiBase}...`);
+            refreshStatus();
+        }
+
+        function disconnect() {
+            apiBase = '';
+            isConnected = false;
+            updateConnectionStatus(false);
+            disconnectWebSocket();
+            log('Disconnected');
+        }
+
+        function updateConnectionStatus(connected) {
+            isConnected = connected;
+            const indicator = document.getElementById('connectionStatus');
+            indicator.classList.toggle('connected', connected);
+        }
+
+        async function refreshStatus() {
+            const data = await apiCall('/api/status');
+            if (data) {
+                updateConnectionStatus(true);
+                document.getElementById('esp32Status').textContent = data.esp32_status;
+                document.getElementById('esp32Status').className = `value ${data.esp32_status === 'connected' ? 'ok' : 'error'}`;
+                document.getElementById('videoStatus').textContent = data.video_running ? 'Running' : 'Stopped';
+                document.getElementById('videoStatus').className = `value ${data.video_running ? 'ok' : 'error'}`;
+                document.getElementById('audioStatus').textContent = data.audio_running ? 'Recording' : 'Stopped';
+                document.getElementById('audioStatus').className = `value ${data.audio_running ? 'ok' : 'error'}`;
+                document.getElementById('alarmStatus').textContent = data.alarm_state;
+                document.getElementById('alarmStatus').className = `value ${data.alarm_state === 'alarming' ? 'error' : 'ok'}`;
+            } else {
+                updateConnectionStatus(false);
+            }
+        }
+
+        // Movement
+        async function move(xDir, yDir) {
+            const speed = parseInt(speedSlider.value);
+            let leftSpeed = 0;
+            let rightSpeed = 0;
+
+            if (yDir > 0) { // Forward
+                leftSpeed = speed;
+                rightSpeed = speed;
+            } else if (yDir < 0) { // Backward
+                leftSpeed = -speed;
+                rightSpeed = -speed;
+            }
+
+            if (xDir > 0) { // Turn right / Spin right
+                if (yDir === 0) {
+                    leftSpeed = speed;
+                    rightSpeed = -speed;
+                } else {
+                    rightSpeed = Math.floor(rightSpeed * 0.5);
+                }
+            } else if (xDir < 0) { // Turn left / Spin left
+                if (yDir === 0) {
+                    leftSpeed = -speed;
+                    rightSpeed = speed;
+                } else {
+                    leftSpeed = Math.floor(leftSpeed * 0.5);
+                }
+            }
+
+            await apiCall('/api/movement/move', 'POST', {
+                left_speed: leftSpeed,
+                right_speed: rightSpeed,
+                duration_ms: 0
+            });
+        }
+
+        async function stopMotors() {
+            await apiCall('/api/movement/stop', 'POST');
+        }
+
+        // HLS Stream (H.264 + AAC)
+        let hls = null;
+
+        async function startHLS() {
+            if (!apiBase) {
+                log('Not connected', 'error');
+                return;
+            }
+
+            const status = document.getElementById('hlsStatus');
+            const video = document.getElementById('hlsVideo');
+            const placeholder = document.getElementById('hlsPlaceholder');
+
+            status.textContent = 'Starting...';
+            status.style.color = '#ffaa00';
+
+            // Start HLS stream on server
+            const result = await apiCall('/api/stream/hls/start', 'POST');
+            if (!result || !result.success) {
+                status.textContent = 'Failed to start';
+                status.style.color = '#ff4444';
+                return;
+            }
+
+            // Wait a moment for segments to be created
+            await new Promise(resolve => setTimeout(resolve, 3000));
+
+            const hlsUrl = `http://${apiBase}/api/stream/hls/playlist.m3u8`;
+
+            if (typeof Hls !== 'undefined' && Hls.isSupported()) {
+                // Use hls.js for browsers without native HLS support
+                hls = new Hls({
+                    liveSyncDurationCount: 3,
+                    liveMaxLatencyDurationCount: 6,
+                    liveDurationInfinity: true,
+                    lowLatencyMode: true,
+                });
+
+                hls.loadSource(hlsUrl);
+                hls.attachMedia(video);
+
+                hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                    video.style.display = 'block';
+                    placeholder.style.display = 'none';
+                    video.play();
+                    status.textContent = 'Playing';
+                    status.style.color = '#44ff44';
+                    log('HLS stream started (hls.js)');
+                });
+
+                hls.on(Hls.Events.ERROR, (event, data) => {
+                    if (data.fatal) {
+                        log(`HLS error: ${data.type}`, 'error');
+                        status.textContent = 'Error';
+                        status.style.color = '#ff4444';
+                    }
+                });
+
+            } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                // Native HLS support (Safari)
+                video.src = hlsUrl;
+                video.style.display = 'block';
+                placeholder.style.display = 'none';
+                video.play();
+                status.textContent = 'Playing';
+                status.style.color = '#44ff44';
+                log('HLS stream started (native)');
+            } else {
+                status.textContent = 'HLS not supported';
+                status.style.color = '#ff4444';
+                log('HLS is not supported in this browser', 'error');
+            }
+        }
+
+        async function stopHLS() {
+            const status = document.getElementById('hlsStatus');
+            const video = document.getElementById('hlsVideo');
+            const placeholder = document.getElementById('hlsPlaceholder');
+
+            if (hls) {
+                hls.destroy();
+                hls = null;
+            }
+
+            video.pause();
+            video.src = '';
+            video.style.display = 'none';
+            placeholder.style.display = 'flex';
+
+            // Stop HLS on server
+            await apiCall('/api/stream/hls/stop', 'POST');
+
+            status.textContent = 'Stopped';
+            status.style.color = '#888';
+            log('HLS stream stopped');
+        }
+
+        // Legacy MJPEG Video
+        function startVideo() {
+            if (!apiBase) {
+                log('Not connected', 'error');
+                return;
+            }
+            const img = document.getElementById('videoStream');
+            const placeholder = document.getElementById('videoPlaceholder');
+            img.src = `http://${apiBase}/api/stream/video`;
+            img.style.display = 'block';
+            placeholder.style.display = 'none';
+            log('Video stream started');
+        }
+
+        function stopVideo() {
+            const img = document.getElementById('videoStream');
+            const placeholder = document.getElementById('videoPlaceholder');
+            img.src = '';
+            img.style.display = 'none';
+            placeholder.style.display = 'block';
+            log('Video stream stopped');
+        }
+
+        async function takeSnapshot() {
+            if (!apiBase) return;
+            window.open(`http://${apiBase}/api/stream/snapshot`, '_blank');
+            log('Snapshot taken');
+        }
+
+        // Audio Stream using WebSocket + Web Audio API
+        let audioContext = null;
+        let audioWs = null;
+        let audioGainNode = null;
+        let audioQueue = [];
+        let isPlayingAudio = false;
+        let audioSampleRate = 48000; // Will be updated from server config
+        let nextPlayTime = 0;
+        let audioConfig = null;
+
+        async function startAudioStream() {
+            if (!apiBase) {
+                log('Not connected', 'error');
+                return;
+            }
+
+            const status = document.getElementById('audioStreamStatus');
+
+            try {
+                // Connect to audio WebSocket first to get config
+                const wsUrl = `ws://${apiBase}/ws/audio`;
+                audioWs = new WebSocket(wsUrl);
+                audioWs.binaryType = 'arraybuffer';
+
+                audioWs.onopen = () => {
+                    status.textContent = 'Connected';
+                    status.style.color = '#44ff44';
+                    isPlayingAudio = true;
+                    audioScheduledTime = 0;
+                    audioPlaybackQueue = [];
+                    if (audioPlaybackTimer) {
+                        clearTimeout(audioPlaybackTimer);
+                        audioPlaybackTimer = null;
+                    }
+                    log('Audio stream connected');
+                };
+
+                audioWs.onmessage = async (event) => {
+                    if (typeof event.data === 'string') {
+                        // Handle JSON config message
+                        try {
+                            const msg = JSON.parse(event.data);
+                            if (msg.type === 'audio_config') {
+                                audioConfig = msg;
+                                audioSampleRate = msg.sample_rate || 48000;
+                                log(`Audio config: ${audioSampleRate}Hz, ${msg.channels}ch`);
+                                
+                                // Create audio context with correct sample rate
+                                if (!audioContext || audioContext.sampleRate !== audioSampleRate) {
+                                    if (audioContext) {
+                                        audioContext.close();
+                                    }
+                                    audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                                        sampleRate: audioSampleRate
+                                    });
+                                    audioGainNode = audioContext.createGain();
+                                    audioGainNode.connect(audioContext.destination);
+                                }
+                                
+                                // Resume context if suspended (browser autoplay policy)
+                                if (audioContext.state === 'suspended') {
+                                    await audioContext.resume();
+                                }
+                            }
+                        } catch (e) {
+                            log(`Audio config error: ${e.message}`, 'error');
+                        }
+                    } else if (event.data instanceof ArrayBuffer) {
+                        // Handle audio data
+                        if (audioContext && audioContext.state === 'running') {
+                            playAudioChunk(event.data);
+                        }
+                    }
+                };
+
+                audioWs.onclose = () => {
+                    status.textContent = 'Disconnected';
+                    status.style.color = '#888';
+                    isPlayingAudio = false;
+                    audioScheduledTime = 0;
+                    audioPlaybackQueue = [];
+                    if (audioPlaybackTimer) {
+                        clearTimeout(audioPlaybackTimer);
+                        audioPlaybackTimer = null;
+                    }
+                };
+
+                audioWs.onerror = (err) => {
+                    log('Audio WebSocket error', 'error');
+                    status.textContent = 'Error';
+                    status.style.color = '#ff4444';
+                };
+
+            } catch (err) {
+                log(`Audio start failed: ${err.message}`, 'error');
+                status.textContent = 'Error';
+                status.style.color = '#ff4444';
+            }
+        }
+
+        // Audio playback buffer to smooth out network jitter
+        let audioPlaybackQueue = [];
+        let audioPlaybackTimer = null;
+        let audioBufferThreshold = 3; // Start playing after 3 chunks buffered
+        let audioScheduledTime = 0;
+
+        function playAudioChunk(arrayBuffer) {
+            if (!audioContext || !isPlayingAudio) return;
+
+            try {
+                // Convert Int16 PCM to Float32 for Web Audio API
+                const int16Array = new Int16Array(arrayBuffer);
+                const float32Array = new Float32Array(int16Array.length);
+
+                for (let i = 0; i < int16Array.length; i++) {
+                    float32Array[i] = int16Array[i] / 32768.0;
+                }
+
+                // Add to playback queue
+                audioPlaybackQueue.push(float32Array);
+
+                // Start playback if we have enough buffered
+                if (audioPlaybackQueue.length >= audioBufferThreshold && !audioPlaybackTimer) {
+                    startAudioPlayback();
+                }
+            } catch (e) {
+                log(`Audio playback error: ${e.message}`, 'error');
+            }
+        }
+
+        function startAudioPlayback() {
+            if (!audioContext || !isPlayingAudio) return;
+
+            const now = audioContext.currentTime;
+            
+            // Schedule all buffered chunks
+            while (audioPlaybackQueue.length > 0) {
+                const float32Array = audioPlaybackQueue.shift();
+                
+                // Create audio buffer
+                const audioBuffer = audioContext.createBuffer(1, float32Array.length, audioSampleRate);
+                audioBuffer.getChannelData(0).set(float32Array);
+
+                const source = audioContext.createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(audioGainNode);
+
+                // Schedule playback
+                if (audioScheduledTime < now) {
+                    audioScheduledTime = now;
+                }
+                
+                source.start(audioScheduledTime);
+                audioScheduledTime += audioBuffer.duration;
+            }
+
+            // Schedule next check
+            if (isPlayingAudio) {
+                const delay = Math.max(0, (audioScheduledTime - audioContext.currentTime - 0.05) * 1000);
+                audioPlaybackTimer = setTimeout(() => {
+                    audioPlaybackTimer = null;
+                    if (audioPlaybackQueue.length > 0) {
+                        startAudioPlayback();
+                    }
+                }, delay);
+            }
+        }
+
+        function stopAudioStream() {
+            const status = document.getElementById('audioStreamStatus');
+
+            if (audioWs) {
+                audioWs.close();
+                audioWs = null;
+            }
+
+            isPlayingAudio = false;
+            audioScheduledTime = 0;
+            audioPlaybackQueue = [];
+            if (audioPlaybackTimer) {
+                clearTimeout(audioPlaybackTimer);
+                audioPlaybackTimer = null;
+            }
+            status.textContent = 'Stopped';
+            status.style.color = '#888';
+            log('Audio stream stopped');
+        }
+
+        function startBothStreams() {
+            startVideo();
+            startAudioStream();
+        }
+
+        function stopBothStreams() {
+            stopVideo();
+            stopAudioStream();
+        }
+
+        function toggleMute() {
+            if (audioGainNode) {
+                const muted = document.getElementById('muteAudio').checked;
+                audioGainNode.gain.value = muted ? 0 : 1;
+                log(muted ? 'Audio muted' : 'Audio unmuted');
+            }
+        }
+
+        // Display
+        async function sendDisplayText() {
+            const text = document.getElementById('displayText').value;
+            document.getElementById('displayPreview').textContent = text;
+            await apiCall('/api/display/update', 'POST', { text });
+        }
+
+        async function clearDisplay() {
+            document.getElementById('displayPreview').textContent = '';
+            await apiCall('/api/display/clear', 'POST');
+        }
+
+        async function sendPattern() {
+            const pattern = document.getElementById('patternSelect').value;
+            document.getElementById('displayPreview').textContent = `[Pattern: ${pattern}]`;
+            await apiCall('/api/display/update', 'POST', { pattern });
+        }
+
+        // Audio
+        async function playTone() {
+            const frequency = parseFloat(document.getElementById('toneFreq').value);
+            const duration = parseFloat(document.getElementById('toneDuration').value);
+            await apiCall(`/api/audio/tone?frequency=${frequency}&duration=${duration}`, 'POST');
+        }
+
+        async function stopAudio() {
+            await apiCall('/api/audio/stop', 'POST');
+        }
+
+        // Voice Recording Variables
+        let mediaRecorder = null;
+        let recordedChunks = [];
+        let recordingStartTime = 0;
+        let recordingTimer = null;
+        let isRecording = false;
+
+        async function startRecording() {
+            if (!apiBase) {
+                log('Not connected to robot', 'error');
+                return;
+            }
+
+            try {
+                // Get microphone access with specific constraints for better compatibility
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        sampleRate: 48000,
+                        channelCount: 1
+                    } 
+                });
+                
+                // Determine supported MIME type
+                let mimeType = 'audio/webm;codecs=opus';
+                if (!MediaRecorder.isTypeSupported(mimeType)) {
+                    mimeType = 'audio/webm';
+                    if (!MediaRecorder.isTypeSupported(mimeType)) {
+                        mimeType = 'audio/mp4';
+                        if (!MediaRecorder.isTypeSupported(mimeType)) {
+                            mimeType = ''; // Let browser choose
+                        }
+                    }
+                }
+                
+                log(`Using MIME type: ${mimeType || 'browser default'}`);
+                
+                // Create media recorder
+                const options = mimeType ? { mimeType } : {};
+                mediaRecorder = new MediaRecorder(stream, options);
+                
+                recordedChunks = [];
+                
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data && event.data.size > 0) {
+                        recordedChunks.push(event.data);
+                    }
+                };
+                
+                mediaRecorder.onstop = async () => {
+                    // Stop all tracks first
+                    stream.getTracks().forEach(track => track.stop());
+                    
+                    // Only send if we have data
+                    if (recordedChunks.length > 0) {
+                        const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+                        await sendVoiceMessage(blob);
+                    } else {
+                        log('No audio data recorded', 'error');
+                        resetRecordingUI();
+                    }
+                };
+                
+                mediaRecorder.onerror = (event) => {
+                    log(`Recording error: ${event.message || 'Unknown error'}`, 'error');
+                    stopRecording();
+                };
+                
+                // Start recording - collect all data at once instead of chunks
+                mediaRecorder.start();
+                isRecording = true;
+                recordingStartTime = Date.now();
+                
+                // Safety timeout - force stop after 60 seconds
+                setTimeout(() => {
+                    if (isRecording) {
+                        log('Recording timeout (60s max)', 'warning');
+                        stopRecording();
+                    }
+                }, 60000);
+                
+                // Update UI
+                const recordBtn = document.getElementById('recordBtn');
+                const indicator = document.getElementById('recordingIndicator');
+                const hint = document.getElementById('recordHint');
+                
+                recordBtn.classList.add('recording');
+                indicator.style.display = 'flex';
+                hint.style.display = 'none';
+                
+                // Start timer
+                recordingTimer = setInterval(updateRecordingTime, 100);
+                
+                log('Recording started...');
+                
+            } catch (err) {
+                log(`Recording error: ${err.message}`, 'error');
+            }
+        }
+
+        function stopRecording() {
+            if (!isRecording || !mediaRecorder) {
+                // Force reset UI even if not recording
+                resetRecordingUI();
+                return;
+            }
+            
+            isRecording = false;
+            
+            // Stop the media recorder
+            try {
+                if (mediaRecorder.state !== 'inactive') {
+                    mediaRecorder.stop();
+                }
+            } catch (e) {
+                console.error('Error stopping recorder:', e);
+            }
+            
+            // Clear timer
+            if (recordingTimer) {
+                clearInterval(recordingTimer);
+                recordingTimer = null;
+            }
+            
+            // Update UI
+            resetRecordingUI();
+            
+            log('Recording stopped, sending...');
+        }
+
+        function resetRecordingUI() {
+            const recordBtn = document.getElementById('recordBtn');
+            const indicator = document.getElementById('recordingIndicator');
+            const hint = document.getElementById('recordHint');
+            const timeDisplay = document.getElementById('recordingTime');
+            
+            if (recordBtn) recordBtn.classList.remove('recording');
+            if (indicator) indicator.style.display = 'none';
+            if (hint) hint.style.display = 'inline';
+            if (timeDisplay) timeDisplay.textContent = '0:00';
+            
+            // Reset state
+            isRecording = false;
+            recordingStartTime = 0;
+            recordedChunks = [];
+        }
+
+        function updateRecordingTime() {
+            const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
+            const minutes = Math.floor(elapsed / 60);
+            const seconds = elapsed % 60;
+            document.getElementById('recordingTime').textContent = 
+                `${minutes}:${seconds.toString().padStart(2, '0')}`;
+        }
+
+        async function sendVoiceMessage(blob) {
+            const statusEl = document.getElementById('uploadStatus');
+            
+            try {
+                statusEl.className = 'upload-status uploading';
+                statusEl.textContent = 'Converting and sending voice message...';
+                statusEl.style.display = 'block';
+                
+                // Check blob size
+                if (blob.size < 1000) {
+                    throw new Error('Recording too short');
+                }
+                
+                // Method 1: Try using AudioContext (may not work with all formats)
+                let wavBlob = null;
+                let conversionError = null;
+                
+                try {
+                    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    const arrayBuffer = await blob.arrayBuffer();
+                    
+                    // Decode audio data
+                    let audioBuffer;
+                    try {
+                        audioBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
+                    } catch (decodeErr) {
+                        throw new Error('Browser cannot decode this audio format');
+                    }
+                    
+                    // Convert to 16-bit PCM at 48000Hz
+                    const sampleRate = 48000;
+                    const numSamples = Math.ceil(audioBuffer.duration * sampleRate);
+                    
+                    const offlineContext = new OfflineAudioContext(
+                        1, 
+                        numSamples, 
+                        sampleRate
+                    );
+                    
+                    const source = offlineContext.createBufferSource();
+                    source.buffer = audioBuffer;
+                    source.connect(offlineContext.destination);
+                    source.start();
+                    
+                    const renderedBuffer = await offlineContext.startRendering();
+                    const floatData = renderedBuffer.getChannelData(0);
+                    
+                    // Convert float to int16
+                    const int16Data = new Int16Array(floatData.length);
+                    for (let i = 0; i < floatData.length; i++) {
+                        int16Data[i] = Math.max(-32768, Math.min(32767, floatData[i] * 32767));
+                    }
+                    
+                    // Create WAV file
+                    wavBlob = createWavBlob(int16Data, sampleRate);
+                    
+                } catch (convErr) {
+                    conversionError = convErr;
+                    log(`AudioContext conversion failed: ${convErr.message}`, 'warning');
+                }
+                
+                // Method 2: If AudioContext fails, send the original blob and let server handle it
+                let uploadBlob = wavBlob;
+                let filename = 'voice_message.wav';
+                
+                if (!uploadBlob) {
+                    log('Using server-side conversion...', 'info');
+                    uploadBlob = blob;
+                    filename = 'voice_message.webm';
+                }
+                
+                // Upload to server
+                const formData = new FormData();
+                formData.append('file', uploadBlob, filename);
+                
+                const response = await fetch(`http://${apiBase}/api/audio/upload`, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    statusEl.className = 'upload-status success';
+                    statusEl.textContent = `✓ Voice message sent (${result.size} bytes)`;
+                    log('Voice message sent successfully');
+                } else {
+                    throw new Error(result.message);
+                }
+                
+            } catch (err) {
+                statusEl.className = 'upload-status error';
+                statusEl.textContent = `✗ Error: ${err.message}`;
+                log(`Voice message error: ${err.message}`, 'error');
+            } finally {
+                // Always reset UI after sending
+                resetRecordingUI();
+            }
+            
+            // Hide status after 3 seconds
+            setTimeout(() => {
+                statusEl.style.display = 'none';
+            }, 3000);
+        }
+
+        function createWavBlob(int16Data, sampleRate) {
+            const buffer = new ArrayBuffer(44 + int16Data.length * 2);
+            const view = new DataView(buffer);
+            
+            // WAV header
+            const writeString = (offset, string) => {
+                for (let i = 0; i < string.length; i++) {
+                    view.setUint8(offset + i, string.charCodeAt(i));
+                }
+            };
+            
+            writeString(0, 'RIFF');
+            view.setUint32(4, 36 + int16Data.length * 2, true);
+            writeString(8, 'WAVE');
+            writeString(12, 'fmt ');
+            view.setUint32(16, 16, true);
+            view.setUint16(20, 1, true);
+            view.setUint16(22, 1, true);
+            view.setUint32(24, sampleRate, true);
+            view.setUint32(28, sampleRate * 2, true);
+            view.setUint16(32, 2, true);
+            view.setUint16(34, 16, true);
+            writeString(36, 'data');
+            view.setUint32(40, int16Data.length * 2, true);
+            
+            // Write audio data
+            for (let i = 0; i < int16Data.length; i++) {
+                view.setInt16(44 + i * 2, int16Data[i], true);
+            }
+            
+            return new Blob([buffer], { type: 'audio/wav' });
+        }
+
+        async function uploadAudioFile(input) {
+            if (!apiBase) {
+                log('Not connected to robot', 'error');
+                return;
+            }
+            
+            const file = input.files[0];
+            if (!file) return;
+            
+            const statusEl = document.getElementById('uploadStatus');
+            
+            try {
+                statusEl.className = 'upload-status uploading';
+                statusEl.textContent = `Uploading ${file.name}...`;
+                statusEl.style.display = 'block';
+                
+                const formData = new FormData();
+                formData.append('file', file);
+                
+                const response = await fetch(`http://${apiBase}/api/audio/upload`, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    statusEl.className = 'upload-status success';
+                    statusEl.textContent = `✓ Playing ${file.name}`;
+                    log(`Playing uploaded file: ${file.name}`);
+                    updatePlaybackStatus(true);
+                } else {
+                    throw new Error(result.message);
+                }
+                
+            } catch (err) {
+                statusEl.className = 'upload-status error';
+                statusEl.textContent = `✗ Error: ${err.message}`;
+                log(`Upload error: ${err.message}`, 'error');
+            }
+            
+            // Clear input
+            input.value = '';
+            
+            // Hide status after 3 seconds
+            setTimeout(() => {
+                statusEl.style.display = 'none';
+            }, 3000);
+        }
+
+        function updatePlaybackStatus(isPlaying) {
+            const statusEl = document.getElementById('playbackText');
+            const stopBtn = document.getElementById('stopPlaybackBtn');
+            
+            if (isPlaying) {
+                statusEl.textContent = '🔊 Playing...';
+                statusEl.style.color = '#44ff44';
+                stopBtn.style.display = 'inline-block';
+            } else {
+                statusEl.textContent = 'Ready to play';
+                statusEl.style.color = '#888';
+                stopBtn.style.display = 'none';
+            }
+        }
+
+        async function stopAudioPlayback() {
+            await apiCall('/api/audio/stop', 'POST');
+            updatePlaybackStatus(false);
+        }
+
+        // Check playback status periodically
+        setInterval(async () => {
+            if (!apiBase) return;
+            try {
+                const status = await apiCall('/api/audio/playback-status');
+                if (status && status.available) {
+                    updatePlaybackStatus(status.is_playing);
+                }
+            } catch (e) {
+                // Ignore errors
+            }
+        }, 1000);
+
+        // Display Image Upload
+        async function handleDisplayImageUpload(input) {
+            if (!apiBase) {
+                log('Not connected to robot', 'error');
+                return;
+            }
+            
+            const file = input.files[0];
+            if (!file) return;
+            
+            const statusEl = document.getElementById('displayUploadStatus');
+            const previewEl = document.getElementById('displayImagePreview');
+            
+            try {
+                statusEl.className = 'upload-status uploading';
+                statusEl.textContent = 'Processing image...';
+                statusEl.style.display = 'block';
+                
+                // Read and process image
+                const reader = new FileReader();
+                reader.onload = async (e) => {
+                    const img = new Image();
+                    img.onload = async () => {
+                        // Create canvas for processing
+                        const canvas = document.createElement('canvas');
+                        canvas.width = 400;
+                        canvas.height = 300;
+                        const ctx = canvas.getContext('2d');
+                        
+                        // Draw and resize
+                        ctx.drawImage(img, 0, 0, 400, 300);
+                        
+                        // Get image data
+                        const imageData = ctx.getImageData(0, 0, 400, 300);
+                        const data = imageData.data;
+                        
+                        // Convert to 1-bit with dithering
+                        const binaryData = floydSteinbergDither(data, 400, 300);
+                        
+                        // Check if data is exactly 15000 bytes
+                        if (binaryData.length !== 15000) {
+                            throw new Error(`Invalid image size: expected 15000 bytes, got ${binaryData.length}`);
+                        }
+                        
+                        // Convert to base64 for transmission
+                        const base64Data = btoa(String.fromCharCode.apply(null, binaryData));
+                        
+                        // Send to server
+                        const response = await apiCall('/api/display/update', 'POST', {
+                            image_base64: base64Data
+                        });
+                        
+                        if (response && response.success) {
+                            statusEl.className = 'upload-status success';
+                            statusEl.textContent = '✓ Image uploaded to display';
+                            previewEl.src = canvas.toDataURL();
+                            previewEl.style.display = 'block';
+                            log('Image uploaded to E-Ink display');
+                        } else {
+                            throw new Error(response.message || 'Upload failed');
+                        }
+                    };
+                    img.src = e.target.result;
+                };
+                reader.readAsDataURL(file);
+                
+            } catch (err) {
+                statusEl.className = 'upload-status error';
+                statusEl.textContent = `✗ Error: ${err.message}`;
+                log(`Image upload error: ${err.message}`, 'error');
+            }
+            
+            // Clear input
+            input.value = '';
+            
+            // Hide status after 5 seconds
+            setTimeout(() => {
+                statusEl.style.display = 'none';
+            }, 5000);
+        }
+        
+        function floydSteinbergDither(data, width, height) {
+            // Convert to grayscale
+            const gray = new Float32Array(width * height);
+            for (let i = 0; i < width * height; i++) {
+                const r = data[i * 4];
+                const g = data[i * 4 + 1];
+                const b = data[i * 4 + 2];
+                gray[i] = r * 0.299 + g * 0.587 + b * 0.114;
+            }
+            
+            // Apply Floyd-Steinberg dithering
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    const idx = y * width + x;
+                    const oldPixel = gray[idx];
+                    const newPixel = oldPixel < 128 ? 0 : 255;
+                    const error = oldPixel - newPixel;
+                    gray[idx] = newPixel;
+                    
+                    // Distribute error
+                    if (x + 1 < width) {
+                        gray[idx + 1] += error * 7 / 16;
+                    }
+                    if (x - 1 >= 0 && y + 1 < height) {
+                        gray[idx + width - 1] += error * 3 / 16;
+                    }
+                    if (y + 1 < height) {
+                        gray[idx + width] += error * 5 / 16;
+                    }
+                    if (x + 1 < width && y + 1 < height) {
+                        gray[idx + width + 1] += error * 1 / 16;
+                    }
+                }
+            }
+            
+            // Pack into bytes (1 bit per pixel, 0=black, 1=white)
+            const packed = new Uint8Array(width * height / 8);
+            for (let i = 0; i < width * height; i++) {
+                const byteIdx = Math.floor(i / 8);
+                const bitIdx = 7 - (i % 8);
+                if (gray[i] < 128) {
+                    packed[byteIdx] &= ~(1 << bitIdx);
+                } else {
+                    packed[byteIdx] |= (1 << bitIdx);
+                }
+            }
+            
+            return packed;
+        }
+
+        // Alarm
+        async function enableAlarm() {
+            await apiCall('/api/alarm/enable', 'POST');
+            refreshStatus();
+        }
+
+        async function disableAlarm() {
+            await apiCall('/api/alarm/disable', 'POST');
+            refreshStatus();
+        }
+
+        async function acknowledgeAlarm() {
+            await apiCall('/api/alarm/acknowledge', 'POST');
+            refreshStatus();
+        }
+
+        async function testAlarm() {
+            await apiCall('/api/alarm/test', 'POST');
+        }
+
+        // System
+        async function pingESP32() {
+            await apiCall('/api/system/ping', 'POST');
+        }
+
+        async function resetESP32() {
+            if (confirm('Are you sure you want to reset the ESP32?')) {
+                await apiCall('/api/system/reset', 'POST');
+            }
+        }
+
+        // WebSocket
+        function connectWebSocket() {
+            if (!apiBase) {
+                log('Not connected to robot', 'error');
+                return;
+            }
+
+            if (ws) {
+                ws.close();
+            }
+
+            const wsUrl = `ws://${apiBase}/ws`;
+            log(`Connecting WebSocket to ${wsUrl}...`);
+
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                log('WebSocket connected', 'success');
+                addEvent('connected', { message: 'WebSocket connected' });
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    addEvent(data.type, data.data);
+
+                    // Handle specific events
+                    if (data.type === 'alarm_triggered') {
+                        log(`🚨 ALARM: ${data.data.state}`, 'error');
+                    } else if (data.type === 'gesture_detected') {
+                        log(`👋 Gesture: ${data.data.gesture} (${data.data.confidence.toFixed(2)})`, 'success');
+                    }
+                } catch (e) {
+                    log(`WS message: ${event.data}`);
+                }
+            };
+
+            ws.onclose = () => {
+                log('WebSocket disconnected');
+                addEvent('disconnected', { message: 'WebSocket disconnected' });
+            };
+
+            ws.onerror = (error) => {
+                log('WebSocket error', 'error');
+            };
+        }
+
+        function disconnectWebSocket() {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+        }
+
+        function addEvent(type, data) {
+            const eventList = document.getElementById('eventList');
+            const item = document.createElement('div');
+            item.className = 'event-item';
+            const timestamp = new Date().toLocaleTimeString();
+            item.innerHTML = `<span class="type">${type}</span> <small>${timestamp}</small><br>${JSON.stringify(data)}`;
+            eventList.insertBefore(item, eventList.firstChild);
+
+            // Keep only last 50 events
+            while (eventList.children.length > 50) {
+                eventList.removeChild(eventList.lastChild);
+            }
+        }
+
+        // Keyboard controls
+        document.addEventListener('keydown', (e) => {
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+            switch (e.key) {
+                case 'ArrowUp':
+                case 'w':
+                    e.preventDefault();
+                    move(0, 1);
+                    break;
+                case 'ArrowDown':
+                case 's':
+                    e.preventDefault();
+                    move(0, -1);
+                    break;
+                case 'ArrowLeft':
+                case 'a':
+                    e.preventDefault();
+                    move(-1, 0);
+                    break;
+                case 'ArrowRight':
+                case 'd':
+                    e.preventDefault();
+                    move(1, 0);
+                    break;
+                case ' ':
+                    e.preventDefault();
+                    stopMotors();
+                    break;
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+            if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'w', 'a', 's', 'd'].includes(e.key)) {
+                stopMotors();
+            }
+        });
+
+        // Initialize
+        log('Control panel ready.');
+        log('Enter Pi IP:Port (e.g., 192.168.1.18:8000) and click Connect');
+        log('Keyboard: WASD/Arrows to move, Space to stop');
+    </script>
+</body>
+</html>
