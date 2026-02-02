@@ -43,7 +43,7 @@ pip install -r requirements.txt
 ```bash
 python main.py
 ```
-* You may use another host machine to check the status using the [sample debugging webface](frontend/index_alt.html)
+* You may use another host machine to check the status using the [sample debugging webface](debug/index_alt.html)
 
 ## Notes
 
