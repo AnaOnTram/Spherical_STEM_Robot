@@ -19,7 +19,7 @@ Devoting in building stories with both wonderful childs and their loving parents
 - [x] Bidirectional Communication: Client side can (record) send audio to the device and playback at the device. 
 - [x] Motion Control: Remote control of dual motors.[^2]
 - [x] Display Updates: Rendering the 4.2” e-ink through either upload image (400*300) or input text (string).[^2]
-- [ ] Sound Detection: Background sound-inference for crying detection. 
+- [x] Sound Detection: Background sound-inference for crying detection. 
 - [ ] Education: STEM-related education delivering. 
 - [x] API call: Setted up [API](API.md) server for front-end UI/UX development.
 

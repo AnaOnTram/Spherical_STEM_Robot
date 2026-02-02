@@ -497,6 +497,160 @@
             color: #00d4ff;
             font-weight: bold;
         }
+
+        /* Alarm Panel Styles */
+        .alarm-status-panel {
+            background: #0f0f23;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+
+        .alarm-indicator {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+            padding: 10px;
+            border-radius: 5px;
+            background: #1a1a2e;
+            transition: all 0.3s;
+        }
+
+        .alarm-indicator.active {
+            background: #d32f2f;
+            animation: alarmPulse 1s infinite;
+        }
+
+        .alarm-indicator.detecting {
+            background: #ff9800;
+        }
+
+        .alarm-indicator.cooldown {
+            background: #607d8b;
+        }
+
+        @keyframes alarmPulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        .alarm-icon {
+            font-size: 24px;
+        }
+
+        .alarm-text {
+            font-weight: bold;
+            font-size: 16px;
+        }
+
+        .alarm-stats {
+            display: flex;
+            gap: 20px;
+        }
+
+        .alarm-stats .stat {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .alarm-stats label {
+            color: #888;
+            font-size: 12px;
+        }
+
+        button.warning {
+            background: #ff9800;
+            color: #000;
+        }
+
+        button.warning:hover {
+            background: #ffb74d;
+        }
+
+        /* History Panel Styles */
+        .history-controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+            align-items: center;
+        }
+
+        .history-controls select {
+            flex: 1;
+            padding: 8px;
+            border: none;
+            border-radius: 5px;
+            background: #0f0f23;
+            color: #fff;
+        }
+
+        .history-list {
+            max-height: 200px;
+            overflow-y: auto;
+            background: #0f0f23;
+            border-radius: 5px;
+            padding: 10px;
+        }
+
+        .history-item {
+            padding: 8px;
+            border-bottom: 1px solid #1a1a2e;
+            font-size: 12px;
+        }
+
+        .history-item:last-child {
+            border-bottom: none;
+        }
+
+        .history-item .timestamp {
+            color: #888;
+            font-size: 11px;
+        }
+
+        .history-item .event-type {
+            font-weight: bold;
+            color: #00d4ff;
+        }
+
+        .history-item .event-type.alarm {
+            color: #ff4444;
+        }
+
+        .history-item .event-type.crying {
+            color: #ff9800;
+        }
+
+        .history-item .confidence {
+            color: #4caf50;
+        }
+
+        .history-item .duration {
+            color: #888;
+        }
+
+        /* Config Row */
+        .config-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        .config-row label {
+            min-width: 150px;
+            color: #888;
+            font-size: 13px;
+        }
+
+        .config-row input {
+            padding: 8px;
+            border: none;
+            border-radius: 5px;
+            background: #0f0f23;
+            color: #fff;
+        }
     </style>
 </head>
 <body>
@@ -715,11 +869,72 @@
             <!-- Alarm Control -->
             <div class="card">
                 <h2>🚨 Alarm Control</h2>
+                <div class="alarm-status-panel" id="alarmStatusPanel">
+                    <div class="alarm-indicator" id="alarmIndicator">
+                        <span class="alarm-icon">🔇</span>
+                        <span class="alarm-text" id="alarmStateText">Unknown</span>
+                    </div>
+                    <div class="alarm-stats">
+                        <div class="stat">
+                            <label>Threshold:</label>
+                            <span id="alarmThreshold">--</span>
+                        </div>
+                        <div class="stat">
+                            <label>Duration:</label>
+                            <span id="alarmDuration">--</span>s
+                        </div>
+                    </div>
+                </div>
                 <div class="button-group">
-                    <button class="success" onclick="enableAlarm()">✓ Enable Monitoring</button>
+                    <button class="success" onclick="enableAlarm()">✓ Enable</button>
                     <button class="danger" onclick="disableAlarm()">✗ Disable</button>
-                    <button onclick="acknowledgeAlarm()">👍 Acknowledge</button>
-                    <button onclick="testAlarm()">🔔 Test Alarm</button>
+                    <button onclick="acknowledgeAlarm()">👍 Ack</button>
+                    <button class="warning" onclick="testAlarm()">🔔 Test</button>
+                </div>
+                <details style="margin-top: 15px;">
+                    <summary style="cursor: pointer; color: #888;">⚙️ Configuration</summary>
+                    <div style="margin-top: 10px;">
+                        <div class="config-row">
+                            <label>Threshold (0.0-1.0):</label>
+                            <input type="number" id="configThreshold" value="0.8" min="0.0" max="1.0" step="0.05" style="width: 80px;">
+                        </div>
+                        <div class="config-row">
+                            <label>Duration (seconds):</label>
+                            <input type="number" id="configDuration" value="3" min="1" max="30" style="width: 80px;">
+                        </div>
+                        <div class="button-group" style="margin-top: 10px;">
+                            <button onclick="updateAlarmConfig()">💾 Save Config</button>
+                            <button onclick="loadAlarmConfig()">🔄 Refresh</button>
+                        </div>
+                    </div>
+                </details>
+                <details style="margin-top: 10px;">
+                    <summary style="cursor: pointer; color: #888;">🔗 Webhook Settings</summary>
+                    <div style="margin-top: 10px;">
+                        <input type="text" id="webhookUrl" placeholder="https://your-api.com/alerts" style="width: 100%; margin-bottom: 10px;">
+                        <div class="button-group">
+                            <button onclick="setWebhook()">💾 Set Webhook</button>
+                            <button onclick="clearWebhook()">🗑️ Clear</button>
+                        </div>
+                    </div>
+                </details>
+            </div>
+
+            <!-- Detection History -->
+            <div class="card">
+                <h2>📜 Detection History</h2>
+                <div class="history-controls">
+                    <select id="historyFilter" onchange="loadDetectionHistory()">
+                        <option value="">All Events</option>
+                        <option value="alarm_triggered">Alarms Only</option>
+                        <option value="crying_detected">Crying Detected</option>
+                        <option value="crying_confirmed">Crying Confirmed</option>
+                    </select>
+                    <button onclick="loadDetectionHistory()">🔄 Refresh</button>
+                    <button onclick="clearHistory()">🗑️ Clear</button>
+                </div>
+                <div class="history-list" id="historyList">
+                    <div class="history-item">No events recorded</div>
                 </div>
             </div>
 
@@ -850,6 +1065,9 @@
                 document.getElementById('audioStatus').className = `value ${data.audio_running ? 'ok' : 'error'}`;
                 document.getElementById('alarmStatus').textContent = data.alarm_state;
                 document.getElementById('alarmStatus').className = `value ${data.alarm_state === 'alarming' ? 'error' : 'ok'}`;
+                
+                // Update alarm display panel
+                updateAlarmDisplay(data.alarm_state);
             } else {
                 updateConnectionStatus(false);
             }
@@ -1783,6 +2001,145 @@
 
         async function testAlarm() {
             await apiCall('/api/alarm/test', 'POST');
+            log('🧪 Test alarm triggered!', 'success');
+        }
+
+        // Alarm Configuration
+        async function loadAlarmConfig() {
+            const data = await apiCall('/api/alarm/config');
+            if (data) {
+                document.getElementById('configThreshold').value = data.threshold || 0.8;
+                document.getElementById('configDuration').value = data.detection_duration || 3;
+                document.getElementById('alarmThreshold').textContent = data.threshold || '--';
+                document.getElementById('alarmDuration').textContent = data.detection_duration || '--';
+                log('Alarm config loaded');
+            }
+        }
+
+        async function updateAlarmConfig() {
+            const threshold = parseFloat(document.getElementById('configThreshold').value);
+            const duration = parseFloat(document.getElementById('configDuration').value);
+            
+            const data = await apiCall('/api/alarm/config', 'POST', {
+                threshold: threshold,
+                detection_duration: duration
+            });
+            
+            if (data && data.success) {
+                log('✅ Alarm configuration updated', 'success');
+                loadAlarmConfig();
+            }
+        }
+
+        // Webhook Configuration
+        async function setWebhook() {
+            const url = document.getElementById('webhookUrl').value.trim();
+            if (!url) {
+                log('Please enter a webhook URL', 'error');
+                return;
+            }
+            
+            const data = await apiCall(`/api/alarm/webhook?url=${encodeURIComponent(url)}`, 'POST');
+            if (data && data.success) {
+                log('✅ Webhook configured', 'success');
+            }
+        }
+
+        async function clearWebhook() {
+            document.getElementById('webhookUrl').value = '';
+            const data = await apiCall('/api/alarm/webhook?url=', 'POST');
+            if (data && data.success) {
+                log('🗑️ Webhook cleared', 'success');
+            }
+        }
+
+        // Detection History
+        async function loadDetectionHistory() {
+            const filter = document.getElementById('historyFilter').value;
+            let url = '/api/alarm/history?limit=50';
+            if (filter) {
+                url += `&event_type=${filter}`;
+            }
+            
+            const data = await apiCall(url);
+            const historyList = document.getElementById('historyList');
+            
+            if (!data || !data.events || data.events.length === 0) {
+                historyList.innerHTML = '<div class="history-item">No events recorded</div>';
+                return;
+            }
+            
+            historyList.innerHTML = data.events.map(event => {
+                const date = new Date(event.timestamp);
+                const timeStr = date.toLocaleTimeString();
+                const typeClass = event.event_type === 'alarm_triggered' ? 'alarm' : 
+                                  event.event_type.includes('crying') ? 'crying' : '';
+                
+                return `
+                    <div class="history-item">
+                        <div class="timestamp">${timeStr}</div>
+                        <div>
+                            <span class="event-type ${typeClass}">${event.event_type}</span>
+                            ${event.confidence ? `<span class="confidence">(${Math.round(event.confidence * 100)}%)</span>` : ''}
+                            ${event.duration ? `<span class="duration">- ${event.duration.toFixed(1)}s</span>` : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            
+            log(`📜 Loaded ${data.events.length} events`);
+        }
+
+        async function clearHistory() {
+            const data = await apiCall('/api/alarm/history/clear', 'POST');
+            if (data && data.success) {
+                document.getElementById('historyList').innerHTML = '<div class="history-item">History cleared</div>';
+                log('🗑️ Detection history cleared', 'success');
+            }
+        }
+
+        // Update alarm status display
+        function updateAlarmDisplay(state) {
+            const indicator = document.getElementById('alarmIndicator');
+            const icon = indicator.querySelector('.alarm-icon');
+            const text = document.getElementById('alarmStateText');
+            
+            // Remove all state classes
+            indicator.classList.remove('active', 'detecting', 'cooldown');
+            
+            switch(state) {
+                case 'idle':
+                    icon.textContent = '🔇';
+                    text.textContent = 'Idle - Monitoring';
+                    break;
+                case 'detecting':
+                    indicator.classList.add('detecting');
+                    icon.textContent = '👂';
+                    text.textContent = 'Detecting Crying...';
+                    break;
+                case 'confirmed':
+                    indicator.classList.add('detecting');
+                    icon.textContent = '⚠️';
+                    text.textContent = 'Crying Confirmed!';
+                    break;
+                case 'alarming':
+                    indicator.classList.add('active');
+                    icon.textContent = '🚨';
+                    text.textContent = 'ALARM TRIGGERED!';
+                    break;
+                case 'cooldown':
+                    indicator.classList.add('cooldown');
+                    icon.textContent = '⏸️';
+                    text.textContent = 'Cooldown';
+                    break;
+                case 'disabled':
+                    icon.textContent = '❌';
+                    text.textContent = 'Disabled';
+                    break;
+                default:
+                    icon.textContent = '❓';
+                    text.textContent = state || 'Unknown';
+            }
         }
 
         // System
@@ -1823,8 +2180,16 @@
                     addEvent(data.type, data.data);
 
                     // Handle specific events
-                    if (data.type === 'alarm_triggered') {
-                        log(`🚨 ALARM: ${data.data.state}`, 'error');
+                    if (data.type === 'ALARM_TRIGGERED') {
+                        log(`🚨 ALARM TRIGGERED: ${data.data.state}`, 'error');
+                        updateAlarmDisplay('alarming');
+                        // Refresh history when alarm triggers
+                        setTimeout(loadDetectionHistory, 1000);
+                    } else if (data.type === 'SOUND_DETECTED') {
+                        if (data.data.category === 'crying') {
+                            log(`👶 Crying detected: ${Math.round(data.data.confidence * 100)}%`, 'warning');
+                            updateAlarmDisplay('detecting');
+                        }
                     } else if (data.type === 'gesture_detected') {
                         log(`👋 Gesture: ${data.data.gesture} (${data.data.confidence.toFixed(2)})`, 'success');
                     }
@@ -1904,10 +2269,44 @@
             }
         });
 
+        // Auto-refresh interval
+        let statusRefreshInterval = null;
+
+        function startAutoRefresh() {
+            if (statusRefreshInterval) clearInterval(statusRefreshInterval);
+            statusRefreshInterval = setInterval(() => {
+                if (isConnected) {
+                    refreshStatus();
+                }
+            }, 2000); // Refresh every 2 seconds
+        }
+
+        function stopAutoRefresh() {
+            if (statusRefreshInterval) {
+                clearInterval(statusRefreshInterval);
+                statusRefreshInterval = null;
+            }
+        }
+
+        // Update connect function to start auto-refresh
+        const originalConnect = connect;
+        connect = function() {
+            originalConnect();
+            startAutoRefresh();
+        };
+
+        // Update disconnect function to stop auto-refresh
+        const originalDisconnect = disconnect;
+        disconnect = function() {
+            originalDisconnect();
+            stopAutoRefresh();
+        };
+
         // Initialize
         log('Control panel ready.');
         log('Enter Pi IP:Port (e.g., 192.168.1.18:8000) and click Connect');
         log('Keyboard: WASD/Arrows to move, Space to stop');
+        log('🚨 Alarm testing: Use the Alarm Control panel after connecting');
     </script>
 </body>
 </html>

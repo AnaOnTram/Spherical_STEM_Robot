@@ -578,6 +578,12 @@
                 font-size: 18px;
             }
         }
+
+        /* Alarm Pulse Animation */
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
     </style>
 </head>
 <body>
@@ -762,6 +768,103 @@
                 </div>
             </div>
             
+            <!-- Alarm Control -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="material-icons">notification_important</span>
+                    <h2>Alarm Control</h2>
+                </div>
+                <div class="card-content">
+                    <!-- Alarm Status Indicator -->
+                    <div id="alarmStatusPanel" style="background-color: var(--md-sys-color-surface-variant); border-radius: var(--md-sys-shape-corner-medium); padding: 16px; margin-bottom: 16px; text-align: center;">
+                        <div id="alarmIcon" style="font-size: 48px; margin-bottom: 8px;">🔇</div>
+                        <div id="alarmStateText" style="font-size: 18px; font-weight: 500; margin-bottom: 8px;">Unknown</div>
+                        <div style="display: flex; justify-content: center; gap: 24px; font-size: 14px; color: var(--md-sys-color-on-surface-variant);">
+                            <span>Threshold: <span id="alarmThreshold">--</span></span>
+                            <span>Duration: <span id="alarmDuration">--</span>s</span>
+                        </div>
+                    </div>
+                    
+                    <!-- Alarm Actions -->
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-bottom: 16px;">
+                        <button class="btn btn-filled" onclick="enableAlarm()">
+                            <span class="material-icons">notifications_active</span>
+                            Enable
+                        </button>
+                        <button class="btn btn-outlined" onclick="disableAlarm()">
+                            <span class="material-icons">notifications_off</span>
+                            Disable
+                        </button>
+                        <button class="btn btn-tonal" onclick="acknowledgeAlarm()">
+                            <span class="material-icons">check_circle</span>
+                            Ack
+                        </button>
+                        <button class="btn btn-error" onclick="testAlarm()">
+                            <span class="material-icons">campaign</span>
+                            Test
+                        </button>
+                    </div>
+                    
+                    <!-- Configuration -->
+                    <details style="margin-bottom: 16px;">
+                        <summary style="cursor: pointer; color: var(--md-sys-color-on-surface-variant); padding: 8px 0;">⚙️ Configuration</summary>
+                        <div style="padding: 16px; background-color: var(--md-sys-color-surface-variant); border-radius: var(--md-sys-shape-corner-medium); margin-top: 8px;">
+                            <div style="margin-bottom: 12px;">
+                                <label style="display: block; font-size: 12px; color: var(--md-sys-color-on-surface-variant); margin-bottom: 4px;">Threshold (0.0-1.0)</label>
+                                <input type="number" id="configThreshold" value="0.8" min="0" max="1" step="0.05" style="width: 100%; padding: 8px; border: 1px solid var(--md-sys-color-outline); border-radius: var(--md-sys-shape-corner-small);">
+                            </div>
+                            <div style="margin-bottom: 12px;">
+                                <label style="display: block; font-size: 12px; color: var(--md-sys-color-on-surface-variant); margin-bottom: 4px;">Duration (seconds)</label>
+                                <input type="number" id="configDuration" value="3" min="1" max="30" style="width: 100%; padding: 8px; border: 1px solid var(--md-sys-color-outline); border-radius: var(--md-sys-shape-corner-small);">
+                            </div>
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn btn-filled" onclick="updateAlarmConfig()" style="flex: 1;">Save</button>
+                                <button class="btn btn-outlined" onclick="loadAlarmConfig()" style="flex: 1;">Refresh</button>
+                            </div>
+                        </div>
+                    </details>
+                    
+                    <!-- Webhook Settings -->
+                    <details>
+                        <summary style="cursor: pointer; color: var(--md-sys-color-on-surface-variant); padding: 8px 0;">🔗 Webhook Settings</summary>
+                        <div style="padding: 16px; background-color: var(--md-sys-color-surface-variant); border-radius: var(--md-sys-shape-corner-medium); margin-top: 8px;">
+                            <input type="text" id="webhookUrl" placeholder="https://your-api.com/alerts" style="width: 100%; padding: 8px; border: 1px solid var(--md-sys-color-outline); border-radius: var(--md-sys-shape-corner-small); margin-bottom: 12px;">
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn btn-filled" onclick="setWebhook()" style="flex: 1;">Set Webhook</button>
+                                <button class="btn btn-outlined" onclick="clearWebhook()" style="flex: 1;">Clear</button>
+                            </div>
+                        </div>
+                    </details>
+                </div>
+            </div>
+
+            <!-- Detection History -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="material-icons">history</span>
+                    <h2>Detection History</h2>
+                </div>
+                <div class="card-content">
+                    <div style="display: flex; gap: 8px; margin-bottom: 16px;">
+                        <select id="historyFilter" onchange="loadDetectionHistory()" style="flex: 1; padding: 8px; border: 1px solid var(--md-sys-color-outline); border-radius: var(--md-sys-shape-corner-small);">
+                            <option value="">All Events</option>
+                            <option value="alarm_triggered">Alarms Only</option>
+                            <option value="crying_detected">Crying Detected</option>
+                            <option value="crying_confirmed">Crying Confirmed</option>
+                        </select>
+                        <button class="btn btn-tonal" onclick="loadDetectionHistory()">
+                            <span class="material-icons">refresh</span>
+                        </button>
+                        <button class="btn btn-outlined" onclick="clearHistory()">
+                            <span class="material-icons">delete</span>
+                        </button>
+                    </div>
+                    <div id="historyList" style="max-height: 200px; overflow-y: auto; background-color: var(--md-sys-color-surface-variant); border-radius: var(--md-sys-shape-corner-medium); padding: 12px;">
+                        <div style="text-align: center; color: var(--md-sys-color-on-surface-variant); padding: 20px;">No events recorded</div>
+                    </div>
+                </div>
+            </div>
+
             <!-- System Status -->
             <div class="card">
                 <div class="card-header">
@@ -779,6 +882,16 @@
                             <span class="material-icons" style="font-size: 32px; color: var(--md-sys-color-primary);">videocam</span>
                             <p style="font-size: 12px; color: var(--md-sys-color-on-surface-variant); margin-top: 8px;">Video</p>
                             <p id="videoStatus" style="font-weight: 500;">--</p>
+                        </div>
+                        <div style="text-align: center; padding: 16px; background-color: var(--md-sys-color-surface-variant); border-radius: var(--md-sys-shape-corner-medium);">
+                            <span class="material-icons" style="font-size: 32px; color: var(--md-sys-color-primary);">mic</span>
+                            <p style="font-size: 12px; color: var(--md-sys-color-on-surface-variant); margin-top: 8px;">Audio</p>
+                            <p id="audioStatus" style="font-weight: 500;">--</p>
+                        </div>
+                        <div style="text-align: center; padding: 16px; background-color: var(--md-sys-color-surface-variant); border-radius: var(--md-sys-shape-corner-medium);">
+                            <span class="material-icons" style="font-size: 32px; color: var(--md-sys-color-primary);">notification_important</span>
+                            <p style="font-size: 12px; color: var(--md-sys-color-on-surface-variant); margin-top: 8px;">Alarm</p>
+                            <p id="alarmStatus" style="font-weight: 500;">--</p>
                         </div>
                     </div>
                     
@@ -1265,9 +1378,282 @@
             if (status) {
                 document.getElementById('esp32Status').textContent = status.esp32_status;
                 document.getElementById('videoStatus').textContent = status.video_running ? 'Running' : 'Stopped';
+                document.getElementById('audioStatus').textContent = status.audio_running ? 'Recording' : 'Stopped';
+                document.getElementById('alarmStatus').textContent = status.alarm_state;
+                updateAlarmDisplay(status.alarm_state);
             }
         }
+
+        // Alarm Control Functions
+        async function enableAlarm() {
+            const result = await apiCall('/api/alarm/enable', 'POST');
+            if (result && result.success) {
+                showSnackbar('Alarm monitoring enabled');
+                refreshStatus();
+            }
+        }
+
+        async function disableAlarm() {
+            const result = await apiCall('/api/alarm/disable', 'POST');
+            if (result && result.success) {
+                showSnackbar('Alarm monitoring disabled');
+                refreshStatus();
+            }
+        }
+
+        async function acknowledgeAlarm() {
+            const result = await apiCall('/api/alarm/acknowledge', 'POST');
+            if (result && result.success) {
+                showSnackbar('Alarm acknowledged');
+                refreshStatus();
+            }
+        }
+
+        async function testAlarm() {
+            const result = await apiCall('/api/alarm/test', 'POST');
+            if (result && result.success) {
+                showSnackbar('🧪 Test alarm triggered!');
+                log('Test alarm triggered', 'success');
+            }
+        }
+
+        async function loadAlarmConfig() {
+            const config = await apiCall('/api/alarm/config');
+            if (config) {
+                document.getElementById('configThreshold').value = config.threshold || 0.8;
+                document.getElementById('configDuration').value = config.detection_duration || 3;
+                document.getElementById('alarmThreshold').textContent = config.threshold || '--';
+                document.getElementById('alarmDuration').textContent = config.detection_duration || '--';
+            }
+        }
+
+        async function updateAlarmConfig() {
+            const threshold = parseFloat(document.getElementById('configThreshold').value);
+            const duration = parseFloat(document.getElementById('configDuration').value);
+            
+            const result = await apiCall('/api/alarm/config', 'POST', {
+                threshold: threshold,
+                detection_duration: duration
+            });
+            
+            if (result && result.success) {
+                showSnackbar('Configuration saved');
+                loadAlarmConfig();
+            }
+        }
+
+        async function setWebhook() {
+            const url = document.getElementById('webhookUrl').value.trim();
+            if (!url) {
+                showSnackbar('Please enter a webhook URL');
+                return;
+            }
+            
+            const result = await apiCall(`/api/alarm/webhook?url=${encodeURIComponent(url)}`, 'POST');
+            if (result && result.success) {
+                showSnackbar('Webhook configured');
+            }
+        }
+
+        async function clearWebhook() {
+            document.getElementById('webhookUrl').value = '';
+            const result = await apiCall('/api/alarm/webhook?url=', 'POST');
+            if (result && result.success) {
+                showSnackbar('Webhook cleared');
+            }
+        }
+
+        async function loadDetectionHistory() {
+            const filter = document.getElementById('historyFilter').value;
+            let url = '/api/alarm/history?limit=50';
+            if (filter) {
+                url += `&event_type=${filter}`;
+            }
+            
+            const data = await apiCall(url);
+            const historyList = document.getElementById('historyList');
+            
+            if (!data || !data.events || data.events.length === 0) {
+                historyList.innerHTML = '<div style="text-align: center; color: var(--md-sys-color-on-surface-variant); padding: 20px;">No events recorded</div>';
+                return;
+            }
+            
+            historyList.innerHTML = data.events.map(event => {
+                const date = new Date(event.timestamp);
+                const timeStr = date.toLocaleTimeString();
+                let icon = '📋';
+                let color = '';
+                
+                if (event.event_type === 'alarm_triggered') {
+                    icon = '🚨';
+                    color = 'color: var(--md-sys-color-error);';
+                } else if (event.event_type.includes('crying')) {
+                    icon = '👶';
+                    color = 'color: #ff9800;';
+                }
+                
+                return `
+                    <div style="padding: 8px; border-bottom: 1px solid var(--md-sys-color-outline-variant); font-size: 13px;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                            <span style="color: var(--md-sys-color-on-surface-variant);">${timeStr}</span>
+                            <span style="${color} font-weight: 500;">${icon} ${event.event_type}</span>
+                        </div>
+                        <div style="display: flex; gap: 16px;">
+                            ${event.confidence ? `<span>Confidence: ${Math.round(event.confidence * 100)}%</span>` : ''}
+                            ${event.duration ? `<span>Duration: ${event.duration.toFixed(1)}s</span>` : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function clearHistory() {
+            const result = await apiCall('/api/alarm/history/clear', 'POST');
+            if (result && result.success) {
+                document.getElementById('historyList').innerHTML = '<div style="text-align: center; color: var(--md-sys-color-on-surface-variant); padding: 20px;">History cleared</div>';
+                showSnackbar('History cleared');
+            }
+        }
+
+        function updateAlarmDisplay(state) {
+            const panel = document.getElementById('alarmStatusPanel');
+            const icon = document.getElementById('alarmIcon');
+            const text = document.getElementById('alarmStateText');
+            
+            // Reset styles
+            panel.style.backgroundColor = 'var(--md-sys-color-surface-variant)';
+            panel.style.animation = 'none';
+            
+            switch(state) {
+                case 'idle':
+                    icon.textContent = '🔇';
+                    text.textContent = 'Idle - Monitoring';
+                    break;
+                case 'detecting':
+                    icon.textContent = '👂';
+                    text.textContent = 'Detecting Crying...';
+                    panel.style.backgroundColor = '#fff3e0';
+                    break;
+                case 'confirmed':
+                    icon.textContent = '⚠️';
+                    text.textContent = 'Crying Confirmed!';
+                    panel.style.backgroundColor = '#ff9800';
+                    break;
+                case 'alarming':
+                    icon.textContent = '🚨';
+                    text.textContent = 'ALARM TRIGGERED!';
+                    panel.style.backgroundColor = 'var(--md-sys-color-error)';
+                    panel.style.color = 'white';
+                    panel.style.animation = 'pulse 1s infinite';
+                    break;
+                case 'cooldown':
+                    icon.textContent = '⏸️';
+                    text.textContent = 'Cooldown';
+                    panel.style.backgroundColor = '#eceff1';
+                    break;
+                case 'disabled':
+                    icon.textContent = '❌';
+                    text.textContent = 'Disabled';
+                    break;
+                default:
+                    icon.textContent = '❓';
+                    text.textContent = state || 'Unknown';
+            }
+        }
+
+        // Auto-refresh status
+        let statusRefreshInterval = null;
+
+        function startAutoRefresh() {
+            if (statusRefreshInterval) clearInterval(statusRefreshInterval);
+            statusRefreshInterval = setInterval(() => {
+                if (isConnected) {
+                    refreshStatus();
+                }
+            }, 2000);
+        }
+
+        function stopAutoRefresh() {
+            if (statusRefreshInterval) {
+                clearInterval(statusRefreshInterval);
+                statusRefreshInterval = null;
+            }
+        }
+
+        // Override connect to start auto-refresh
+        const originalConnect = connect;
+        connect = async function() {
+            await originalConnect();
+            if (isConnected) {
+                startAutoRefresh();
+                loadAlarmConfig();
+            }
+        };
         
+        // Main WebSocket for events
+        let eventWs = null;
+
+        function connectEventWebSocket() {
+            if (!apiBase) return;
+            
+            const wsUrl = `ws://${apiBase}/ws`;
+            eventWs = new WebSocket(wsUrl);
+            
+            eventWs.onopen = () => {
+                log('Event WebSocket connected', 'success');
+                // Subscribe to alarm events
+                eventWs.send(JSON.stringify({
+                    type: 'subscribe',
+                    events: ['ALARM_TRIGGERED', 'SOUND_DETECTED']
+                }));
+            };
+            
+            eventWs.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    handleWebSocketEvent(data);
+                } catch (e) {
+                    console.log('WS message:', event.data);
+                }
+            };
+            
+            eventWs.onclose = () => {
+                log('Event WebSocket disconnected');
+                // Try to reconnect after 5 seconds
+                setTimeout(() => {
+                    if (isConnected) connectEventWebSocket();
+                }, 5000);
+            };
+            
+            eventWs.onerror = (error) => {
+                log('Event WebSocket error', 'error');
+            };
+        }
+
+        function handleWebSocketEvent(data) {
+            if (data.type === 'ALARM_TRIGGERED') {
+                log(`🚨 ALARM: ${data.data.state}`, 'error');
+                updateAlarmDisplay('alarming');
+                showSnackbar('🚨 ALARM TRIGGERED!');
+                // Refresh history after a short delay
+                setTimeout(loadDetectionHistory, 1000);
+            } else if (data.type === 'SOUND_DETECTED') {
+                if (data.data.category === 'crying') {
+                    log(`👶 Crying detected: ${Math.round(data.data.confidence * 100)}%`, 'warning');
+                    updateAlarmDisplay('detecting');
+                }
+            }
+        }
+
+        // Override connect to also connect event WebSocket
+        const originalConnectFunc = connect;
+        connect = async function() {
+            await originalConnectFunc();
+            if (isConnected) {
+                connectEventWebSocket();
+            }
+        };
+
         async function pingESP32() {
             const result = await apiCall('/api/system/ping', 'POST');
             if (result && result.success) {

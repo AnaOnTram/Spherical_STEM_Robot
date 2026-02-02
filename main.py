@@ -313,12 +313,17 @@ def main():
 
     # List audio devices if requested
     if args.list_audio:
-        import subprocess
-        print("\n=== CAPTURE (Recording) Devices ===")
-        subprocess.run(["arecord", "-l"], check=False)
-        print("\n=== PLAYBACK Devices ===")
-        subprocess.run(["aplay", "-l"], check=False)
-        print("\nUse device format: plughw:CARD,DEVICE (e.g., plughw:2,0)")
+        try:
+            from utils.audio_detect import list_all_devices
+            list_all_devices()
+        except ImportError:
+            import subprocess
+            print("\n=== CAPTURE (Recording) Devices ===")
+            subprocess.run(["arecord", "-l"], check=False)
+            print("\n=== PLAYBACK Devices ===")
+            subprocess.run(["aplay", "-l"], check=False)
+            print("\nUse device format: plughw:CARD,DEVICE (e.g., plughw:2,0)")
+            print("Or use 'auto' for automatic USB device detection")
         sys.exit(0)
 
     if args.debug:

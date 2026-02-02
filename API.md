@@ -13,6 +13,7 @@ WebSocket Base URL: `ws://<raspberry-pi-ip>:8000`
 - [Audio Streaming](#audio-streaming)
 - [Audio Playback](#audio-playback)
 - [E-Ink Display](#e-ink-display)
+- [Alarm Control](#alarm-control)
 - [WebSocket Events](#websocket-events)
 - [Error Handling](#error-handling)
 
@@ -292,6 +293,174 @@ POST /api/display/clear
 
 ---
 
+## Alarm Control
+
+### Get Alarm Status
+```
+GET /api/alarm/status
+```
+**Response:**
+```json
+{
+  "enabled": true,
+  "state": "idle"
+}
+```
+States: `idle`, `detecting`, `confirmed`, `alarming`, `cooldown`, `disabled`
+
+### Enable Alarm Monitoring
+```
+POST /api/alarm/enable
+```
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Alarm monitoring enabled"
+}
+```
+
+### Disable Alarm Monitoring
+```
+POST /api/alarm/disable
+```
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Alarm monitoring disabled"
+}
+```
+
+### Acknowledge Alarm
+```
+POST /api/alarm/acknowledge
+```
+Skips cooldown and resumes monitoring immediately.
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Alarm acknowledged"
+}
+```
+
+### Test Alarm
+```
+POST /api/alarm/test
+```
+Triggers a test alarm to verify the notification system.
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Test alarm triggered"
+}
+```
+
+### Get Alarm Configuration
+```
+GET /api/alarm/config
+```
+**Response:**
+```json
+{
+  "detection_duration": 3.0,
+  "cooldown_duration": 30.0,
+  "recording_duration": 10.0,
+  "recordings_dir": "/tmp/spherical_bot/recordings",
+  "alarm_sound_path": null
+}
+```
+
+### Update Alarm Configuration
+```
+POST /api/alarm/config
+Content-Type: application/json
+```
+**Request Body:**
+```json
+{
+  "threshold": 0.85,
+  "detection_duration": 5.0
+}
+```
+| Parameter | Type | Range | Description |
+|-----------|------|-------|-------------|
+| threshold | float | 0.0 - 1.0 | Confidence threshold for crying detection |
+| detection_duration | float | 1.0 - 30.0 | Seconds of sustained crying to trigger alarm |
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Configuration updated"
+}
+```
+
+### Get Detection History
+```
+GET /api/alarm/history?limit=50&event_type=alarm_triggered
+```
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| limit | int | 100 | Maximum number of events to return |
+| event_type | string | - | Filter by event type (optional) |
+
+Event types: `crying_detected`, `crying_confirmed`, `alarm_triggered`, `alarm_acknowledged`
+
+**Response:**
+```json
+{
+  "events": [
+    {
+      "timestamp": "2026-02-02T10:30:00",
+      "event_type": "alarm_triggered",
+      "confidence": 0.92,
+      "duration": 3.5,
+      "audio_file": "/tmp/spherical_bot/recordings/crying_20260202_103000.wav",
+      "metadata": {}
+    }
+  ],
+  "count": 1
+}
+```
+
+### Clear Detection History
+```
+POST /api/alarm/history/clear
+```
+**Response:**
+```json
+{
+  "success": true,
+  "message": "History cleared"
+}
+```
+
+### Configure Webhook URL
+```
+POST /api/alarm/webhook?url=https://your-api.com/alerts
+```
+**Query Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| url | string | Webhook URL for notifications (empty to clear) |
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Webhook set",
+  "url": "https://your-api.com/alerts"
+}
+```
+
+---
+
 ## WebSocket Events
 
 ### Event WebSocket
@@ -317,6 +486,8 @@ WebSocket: ws://<ip>:8000/ws
 | `person_detected` | Person tracked | `id`, `bbox`, `confidence` |
 | `sound_detected` | Sound classified | `category`, `confidence`, `class_name` |
 | `movement_update` | Motor state changed | `left_speed`, `right_speed`, `status` |
+| `ALARM_TRIGGERED` | Alarm triggered | `state`, `duration`, `audio_file` |
+| `SOUND_DETECTED` | Sound detected | `category`, `confidence` |
 
 **Subscribe to Events:**
 ```json
@@ -424,6 +595,24 @@ def calculate_crc(data):
 ---
 
 ## Configuration
+
+### Alarm Settings
+Edit `config.py` to customize alarm behavior:
+```python
+# YAMNet Sound Detection
+YAMNET_THRESHOLD = 0.8  # Confidence threshold (0.0-1.0)
+CRYING_DETECTION_DURATION = 3  # Seconds of sustained crying to trigger alarm
+
+# Notification Settings
+NOTIFICATION_WEBHOOK_URL = "https://your-api.com/alerts"  # Or None
+NOTIFICATION_LOCAL_SOUND_ENABLED = True  # Play alarm sound locally
+NOTIFICATION_LOG_FILE = "/tmp/spherical_bot/alerts.log"
+NOTIFICATION_MAX_HISTORY = 100  # Number of events to keep in memory
+
+# Alarm Settings
+ALARM_COOLDOWN_DURATION = 30.0  # Seconds between alarms
+ALARM_RECORDING_DURATION = 10.0  # Seconds to record on alarm
+```
 
 ### Serial Port
 Edit `config.py`:

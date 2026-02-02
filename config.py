@@ -31,8 +31,14 @@ CAMERA_FPS = 30
 #   arecord -l   # List capture (mic) devices
 #   aplay -l     # List playback (speaker) devices
 #
-AUDIO_PLAYBACK_DEVICE = "plughw:3,0"  # USB speaker
-AUDIO_RECORD_DEVICE = "hw:2,0"        # Primary mic (USB camera mic) - use hw: for direct access
+# Options:
+# - "auto" - Automatically detect USB audio devices (recommended)
+# - "plughw:X,Y" - Specific playback device
+# - "hw:X,Y" - Specific capture device (lower latency)
+# - "default" - System default device
+#
+AUDIO_PLAYBACK_DEVICE = "auto"  # Auto-detect USB speaker, or use "plughw:3,0"
+AUDIO_RECORD_DEVICE = "auto"    # Auto-detect USB mic, or use "hw:2,0"
 AUDIO_RECORD_DEVICE_2 = None          # Secondary mic for noise cancellation (disabled - using stereo channels instead)
 AUDIO_SAMPLE_RATE = 48000             # USB camera mic native rate (don't use 44100)
 AUDIO_CHANNELS = 2                    # Stereo input from USB camera mic (2 channels)
@@ -51,6 +57,16 @@ EINK_IMAGE_SIZE = 15000  # 400 * 300 / 8 bytes (1-bit packed)
 # YAMNet Sound Detection
 YAMNET_THRESHOLD = 0.8
 CRYING_DETECTION_DURATION = 3  # seconds of sustained crying to trigger alarm
+
+# Notification Settings
+NOTIFICATION_WEBHOOK_URL = None  # e.g., "https://api.example.com/alerts"
+NOTIFICATION_LOCAL_SOUND_ENABLED = True  # Play alarm sound locally
+NOTIFICATION_LOG_FILE = "/tmp/spherical_bot/alerts.log"  # Event log file
+NOTIFICATION_MAX_HISTORY = 100  # Number of events to keep in memory
+
+# Alarm Settings
+ALARM_COOLDOWN_DURATION = 30.0  # seconds between alarms
+ALARM_RECORDING_DURATION = 10.0  # seconds to record on alarm
 
 # API Server
 API_HOST = "0.0.0.0"

@@ -157,17 +157,29 @@ class YAMNetClassifier:
             )
 
         try:
-            # Prepare audio for YAMNet (expects float32, normalized)
+            # Prepare audio for YAMNet (expects float32, normalized to [-1.0, 1.0])
             if audio_data.dtype == np.int16:
+                # Normalize int16 to [-1.0, 1.0] range
                 audio_float = audio_data.astype(np.float32) / 32768.0
             else:
                 audio_float = audio_data.astype(np.float32)
+            
+            # Ensure values are in [-1.0, 1.0] range
+            audio_float = np.clip(audio_float, -1.0, 1.0)
+            
+            # YAMNet expects 16kHz sample rate, but we're recording at 48kHz
+            # Simple downsampling by taking every 3rd sample (48kHz -> 16kHz)
+            if AUDIO_SAMPLE_RATE == 48000:
+                audio_float = audio_float[::3]
+                target_sample_rate = 16000
+            else:
+                target_sample_rate = AUDIO_SAMPLE_RATE
 
-            # Ensure correct length (YAMNet expects ~1 second at 16kHz)
-            expected_samples = AUDIO_SAMPLE_RATE
+            # YAMNet expects exactly 15600 samples (0.975 seconds at 16kHz), not 16000
+            expected_samples = 15600
             if len(audio_float) < expected_samples:
                 audio_float = np.pad(
-                    audio_float, (0, expected_samples - len(audio_float))
+                    audio_float, (0, expected_samples - len(audio_float)), mode='constant'
                 )
             elif len(audio_float) > expected_samples:
                 audio_float = audio_float[:expected_samples]
@@ -175,6 +187,33 @@ class YAMNetClassifier:
             # Run inference
             input_details = self._interpreter.get_input_details()
             output_details = self._interpreter.get_output_details()
+
+            # Check the expected input shape
+            input_shape = input_details[0]["shape"]
+            input_dtype = input_details[0]["dtype"]
+
+            # Ensure audio is 1D before reshaping
+            audio_float = np.squeeze(audio_float)
+
+            # Ensure correct dtype
+            if input_dtype == np.float32:
+                audio_float = audio_float.astype(np.float32)
+            elif input_dtype == np.int16:
+                audio_float = (audio_float * 32768).astype(np.int16)
+
+            # For models with dynamic input shapes (shape=[1] or [-1]),
+            # we need to resize the input tensor
+            if len(input_shape) == 1 and (input_shape[0] == 1 or input_shape[0] == -1):
+                # Resize input tensor to match audio length
+                self._interpreter.resize_tensor_input(
+                    input_details[0]["index"],
+                    [len(audio_float)]
+                )
+                self._interpreter.allocate_tensors()
+                logger.debug(f"Resized model input to accept {len(audio_float)} samples")
+            elif len(input_shape) == 2:
+                # Model expects [batch, samples] format
+                audio_float = np.expand_dims(audio_float, axis=0)
 
             self._interpreter.set_tensor(input_details[0]["index"], audio_float)
             self._interpreter.invoke()

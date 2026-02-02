@@ -525,6 +525,76 @@ def create_app() -> FastAPI:
         alarm_mgr.test_alarm()
         return {"success": True, "message": "Test alarm triggered"}
 
+    @app.get("/api/alarm/config")
+    async def get_alarm_config():
+        """Get alarm configuration."""
+        alarm_mgr = _app_state.get("alarm_manager")
+        if not alarm_mgr:
+            raise HTTPException(status_code=503, detail="Alarm manager not available")
+
+        return alarm_mgr.get_config()
+
+    @app.post("/api/alarm/config")
+    async def update_alarm_config(request: AlarmSettingsRequest):
+        """Update alarm configuration."""
+        alarm_mgr = _app_state.get("alarm_manager")
+        if not alarm_mgr:
+            raise HTTPException(status_code=503, detail="Alarm manager not available")
+
+        alarm_mgr.update_config(
+            detection_duration=request.detection_duration,
+            threshold=request.threshold,
+        )
+        return {"success": True, "message": "Configuration updated"}
+
+    @app.get("/api/alarm/history")
+    async def get_alarm_history(limit: int = 100, event_type: str = None):
+        """Get detection history."""
+        alarm_mgr = _app_state.get("alarm_manager")
+        if not alarm_mgr:
+            raise HTTPException(status_code=503, detail="Alarm manager not available")
+
+        history = alarm_mgr.get_detection_history(limit=limit)
+        
+        # Filter by event type if specified
+        if event_type:
+            history = [h for h in history if h.event_type == event_type]
+        
+        return {
+            "events": [h.to_dict() for h in history],
+            "count": len(history),
+        }
+
+    @app.post("/api/alarm/history/clear")
+    async def clear_alarm_history():
+        """Clear detection history."""
+        alarm_mgr = _app_state.get("alarm_manager")
+        if not alarm_mgr:
+            raise HTTPException(status_code=503, detail="Alarm manager not available")
+
+        alarm_mgr.clear_detection_history()
+        return {"success": True, "message": "History cleared"}
+
+    @app.post("/api/alarm/webhook")
+    async def set_alarm_webhook(url: str):
+        """Configure webhook URL for notifications."""
+        from config import NOTIFICATION_WEBHOOK_URL
+        import config
+        
+        # Update the config module
+        config.NOTIFICATION_WEBHOOK_URL = url if url else None
+        
+        # Update the notification manager if available
+        alarm_mgr = _app_state.get("alarm_manager")
+        if alarm_mgr and hasattr(alarm_mgr, '_notification_manager'):
+            alarm_mgr._notification_manager.webhook_url = url if url else None
+        
+        return {
+            "success": True, 
+            "message": f"Webhook {'set' if url else 'cleared'}",
+            "url": url if url else None,
+        }
+
     # System control
     @app.post("/api/system/ping")
     async def ping_esp32():

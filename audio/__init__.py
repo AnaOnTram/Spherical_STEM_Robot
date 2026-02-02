@@ -6,6 +6,8 @@ from .recorder import AudioRecorder
 from .player import AudioPlayer
 from .yamnet_classifier import YAMNetClassifier, SoundEvent
 from .alarm_manager import AlarmManager
+from .notification_manager import NotificationManager, AlarmNotifier, DetectionEvent
+from .cross_platform_recorder import CrossPlatformRecorder, create_recorder
 
 # Global playback reference buffer for echo cancellation
 # This is shared between AudioPlayer and AudioRecorder
@@ -37,6 +39,11 @@ __all__ = [
     "YAMNetClassifier",
     "SoundEvent",
     "AlarmManager",
+    "NotificationManager",
+    "AlarmNotifier",
+    "DetectionEvent",
+    "CrossPlatformRecorder",
+    "create_recorder",
     "get_playback_buffer",
     "clear_playback_buffer",
 ]

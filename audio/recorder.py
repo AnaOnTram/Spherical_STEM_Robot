@@ -28,6 +28,14 @@ from config import (
     AUDIO_CHUNK_SIZE,
 )
 
+# Import audio device auto-detection
+try:
+    from utils.audio_detect import get_working_capture_device
+    AUDIO_DETECT_AVAILABLE = True
+except ImportError:
+    AUDIO_DETECT_AVAILABLE = False
+    get_working_capture_device = None
+
 # Try to import optional config
 try:
     from config import (
@@ -264,10 +272,16 @@ class AudioRecorder:
         if self._recording:
             return
 
+        # Auto-detect device if set to "auto"
+        actual_device = self.device
+        if self.device == "auto" and AUDIO_DETECT_AVAILABLE:
+            actual_device = get_working_capture_device()
+            logger.info(f"Auto-detected capture device: {actual_device}")
+
         # Initialize primary microphone
-        self._pcm = self._init_pcm(self.device)
+        self._pcm = self._init_pcm(actual_device)
         if not self._pcm:
-            raise RuntimeError(f"Failed to open primary audio device: {self.device}")
+            raise RuntimeError(f"Failed to open primary audio device: {actual_device}")
 
         # Initialize secondary microphone for noise cancellation
         if self._dual_mic and self.device_2:

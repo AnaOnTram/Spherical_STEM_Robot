@@ -17,6 +17,14 @@ except ImportError:
 
 from config import AUDIO_PLAYBACK_DEVICE, AUDIO_SAMPLE_RATE, AUDIO_CHANNELS
 
+# Import audio device auto-detection
+try:
+    from utils.audio_detect import get_working_playback_device
+    AUDIO_DETECT_AVAILABLE = True
+except ImportError:
+    AUDIO_DETECT_AVAILABLE = False
+    get_working_playback_device = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -49,16 +57,27 @@ class AudioPlayer:
                 "pyalsaaudio not installed. Install with: pip install pyalsaaudio"
             )
 
+    def _get_actual_device(self) -> str:
+        """Get the actual device to use, with auto-detection support."""
+        if self.device == "auto" and AUDIO_DETECT_AVAILABLE:
+            actual_device = get_working_playback_device()
+            logger.info(f"Auto-detected playback device: {actual_device}")
+            return actual_device
+        return self.device
+
     def _init_pcm(self, sample_rate: int, channels: int) -> None:
         """Initialize PCM device for playback."""
         self._check_alsa()
         if self._pcm:
             self._pcm.close()
 
+        # Get actual device (with auto-detection if needed)
+        actual_device = self._get_actual_device()
+
         self._pcm = alsaaudio.PCM(
             type=alsaaudio.PCM_PLAYBACK,
             mode=alsaaudio.PCM_NORMAL,
-            device=self.device,
+            device=actual_device,
         )
         self._pcm.setchannels(channels)
         self._pcm.setrate(sample_rate)

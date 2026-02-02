@@ -11,10 +11,19 @@ from typing import Callable, Optional
 
 import numpy as np
 
-from config import CRYING_DETECTION_DURATION
+from config import (
+    CRYING_DETECTION_DURATION,
+    NOTIFICATION_WEBHOOK_URL,
+    NOTIFICATION_LOCAL_SOUND_ENABLED,
+    NOTIFICATION_LOG_FILE,
+    NOTIFICATION_MAX_HISTORY,
+    ALARM_COOLDOWN_DURATION,
+    ALARM_RECORDING_DURATION,
+)
 from .recorder import AudioRecorder
 from .player import AudioPlayer
 from .yamnet_classifier import YAMNetClassifier, SoundEvent, SoundCategory
+from .notification_manager import NotificationManager, AlarmNotifier
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +51,9 @@ class AlarmEvent:
 class AlarmConfig:
     """Alarm configuration."""
     detection_duration: float = CRYING_DETECTION_DURATION
-    cooldown_duration: float = 30.0  # seconds between alarms
+    cooldown_duration: float = ALARM_COOLDOWN_DURATION  # seconds between alarms
     alarm_sound_path: Optional[str] = None
-    recording_duration: float = 10.0  # seconds to record on alarm
+    recording_duration: float = ALARM_RECORDING_DURATION  # seconds to record on alarm
     recordings_dir: str = "/tmp/spherical_bot/recordings"
 
 
@@ -75,6 +84,16 @@ class AlarmManager:
 
         # Ensure recordings directory exists
         Path(self.config.recordings_dir).mkdir(parents=True, exist_ok=True)
+
+        # Initialize notification system
+        self._notification_manager = NotificationManager(
+            webhook_url=NOTIFICATION_WEBHOOK_URL,
+            local_sound_enabled=NOTIFICATION_LOCAL_SOUND_ENABLED,
+            log_file=NOTIFICATION_LOG_FILE,
+            max_history=NOTIFICATION_MAX_HISTORY,
+        )
+        self._notification_manager.set_audio_player(player)
+        self._alarm_notifier = AlarmNotifier(self._notification_manager)
 
     @property
     def state(self) -> AlarmState:
@@ -141,7 +160,7 @@ class AlarmManager:
         elif self._state == AlarmState.DETECTING:
             if is_crying:
                 self._detection_count += 1
-                elapsed = (datetime.now() - self._crying_start).total_seconds()
+                elapsed = (datetime.now() - self._crying_start).total_seconds() if self._crying_start else 0
 
                 if elapsed >= self.config.detection_duration:
                     self._state = AlarmState.CONFIRMED
@@ -159,7 +178,7 @@ class AlarmManager:
 
         elif self._state == AlarmState.COOLDOWN:
             if self._last_alarm:
-                elapsed = (datetime.now() - self._last_alarm).total_seconds()
+                elapsed = (datetime.now() - self._last_alarm).total_seconds() if self._last_alarm else 0
                 if elapsed >= self.config.cooldown_duration:
                     self._state = AlarmState.IDLE
                     logger.info("Cooldown complete, resuming monitoring")
@@ -191,7 +210,7 @@ class AlarmManager:
                 logger.error(f"Failed to play tone: {e}")
 
         # Create alarm event
-        elapsed = (datetime.now() - self._crying_start).total_seconds()
+        elapsed = (datetime.now() - self._crying_start).total_seconds() if self._crying_start else 0
         alarm_event = AlarmEvent(
             timestamp=datetime.now(),
             state=AlarmState.ALARMING,
@@ -206,6 +225,13 @@ class AlarmManager:
                 callback(alarm_event)
             except Exception as e:
                 logger.error(f"Callback error: {e}")
+
+        # Send multi-channel notifications
+        self._alarm_notifier.notify_alarm_triggered(
+            confidence=confidence,
+            duration=elapsed,
+            audio_file=audio_file,
+        )
 
         # Enter cooldown
         self._last_alarm = datetime.now()
@@ -225,7 +251,33 @@ class AlarmManager:
         """Acknowledge alarm (skip cooldown)."""
         if self._state == AlarmState.COOLDOWN:
             self._state = AlarmState.IDLE
+            self._alarm_notifier.notify_alarm_acknowledged()
             logger.info("Alarm acknowledged, resuming monitoring")
+
+    def get_detection_history(self, limit: int = 100):
+        """Get detection history from notification manager."""
+        return self._notification_manager.get_history(limit=limit)
+
+    def clear_detection_history(self):
+        """Clear detection history."""
+        self._notification_manager.clear_history()
+
+    def update_config(self, **kwargs):
+        """Update alarm configuration."""
+        for key, value in kwargs.items():
+            if hasattr(self.config, key):
+                setattr(self.config, key, value)
+                logger.info(f"Updated config: {key} = {value}")
+
+    def get_config(self):
+        """Get current alarm configuration."""
+        return {
+            "detection_duration": self.config.detection_duration,
+            "cooldown_duration": self.config.cooldown_duration,
+            "recording_duration": self.config.recording_duration,
+            "recordings_dir": self.config.recordings_dir,
+            "alarm_sound_path": self.config.alarm_sound_path,
+        }
 
     def test_alarm(self) -> None:
         """Trigger test alarm."""
