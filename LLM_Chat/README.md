@@ -12,6 +12,7 @@ wget https://huggingface.co/LiquidAI/LFM2.5-Audio-1.5B-GGUF/resolve/main/mmproj-
 wget https://huggingface.co/LiquidAI/LFM2.5-Audio-1.5B-GGUF/resolve/main/tokenizer-LFM2.5-Audio-1.5B-Q4_0.gguf
 wget https://huggingface.co/LiquidAI/LFM2.5-Audio-1.5B-GGUF/resolve/main/vocoder-LFM2.5-Audio-1.5B-Q4_0.gguf
 ```
+<font color='red'>Please adjust the model path in `config.py` correspondingly</font>
 * Download the official cpp engine
 ```bash
 cd LLM_Chat
