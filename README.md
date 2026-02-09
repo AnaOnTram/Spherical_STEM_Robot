@@ -20,8 +20,11 @@ Devoting in building stories with both wonderful childs and their loving parents
 - [x] Motion Control: Remote control of dual motors.[^2]
 - [x] Display Updates: Rendering the 4.2” e-ink through either upload image (400*300) or input text (string).[^2]
 - [x] Sound Detection: Background sound-inference for crying detection. 
-- [ ] Education: STEM-related education delivering. 
+- [x] Local LLM Conversation: ASR + TTS, backboned by [LiquidAI/LFM2.5-Audio-1.5B](https://huggingface.co/LiquidAI/LFM2.5-Audio-1.5B)
+- [x] Cloud-based natural language STEM Education: Learning STEM related knowledge through having natural conversation with GPT.  
 - [x] API call: Setted up [API](API.md) server for front-end UI/UX development.
+- [ ] Motion Detection & Gesture Dection: For fall detection and gesture interaction.
+- [ ] Education Content: 
 
 ## Project Framework
 Please refers to this [documentation](framework.md)
@@ -44,6 +47,7 @@ pip install -r requirements.txt
 ```bash
 export INTERMEDIATE_SERVER_AUTH=[your-authentication-key]
 ```
+* Start the service
 ```bash
 python main.py
 ```
