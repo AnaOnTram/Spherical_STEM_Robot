@@ -2,6 +2,7 @@
 
 import base64
 import io
+import json
 import os
 import socket
 import struct
@@ -381,16 +382,11 @@ def cloud_chat_with_audio(
     Returns:
         LLMChatResult with response data
     """
+    import httpx
     start_time = time.time()
     
-    if not config.OPENROUTER_API_KEY:
-        raise RuntimeError("OPENROUTER_API_KEY not configured")
-    
-    # Initialize client
-    client = OpenAI(
-        base_url=config.OPENROUTER_BASE_URL,
-        api_key=config.OPENROUTER_API_KEY,
-    )
+    # Use intermediate server auth key (NOT the OpenRouter API key)
+    auth_key = getattr(config, 'INTERMEDIATE_SERVER_AUTH', 'admin')
     
     # Handle session
     if reset and session_id:
@@ -401,15 +397,26 @@ def cloud_chat_with_audio(
     
     # Add system prompt if first message or reset
     if not messages or reset:
-        sys_prompt = system_prompt or "You are a helpful assistant."
-        messages.append({"role": "system", "content": sys_prompt})
+        sys_prompt = system_prompt or "You are a helpful assistant for young children. Use very simple words that a 3-year-old can understand. Keep answers short and friendly. Speak in a warm, gentle voice."
+        messages = [{"role": "system", "content": sys_prompt}]
     
-    # First, transcribe audio using OpenAI Whisper or similar via OpenRouter
-    # For now, we'll use a simpler approach - treat as text input
-    # In a full implementation, you'd use an ASR service here
-    user_message = "[Audio input received]"
+    # Encode audio to base64 for audio-capable models
+    encoded_audio = base64.b64encode(wav_data).decode("utf-8")
+    user_message = "[Audio input sent]"
     
-    messages.append({"role": "user", "content": user_message})
+    # Create message with audio input (OpenAI audio format)
+    messages.append({
+        "role": "user",
+        "content": [
+            {
+                "type": "input_audio",
+                "input_audio": {
+                    "data": encoded_audio,
+                    "format": "wav"
+                }
+            }
+        ]
+    })
     
     # Trim session history if too long
     max_messages = config.LLM_CHAT_SESSION_MAX_MESSAGES
@@ -417,24 +424,221 @@ def cloud_chat_with_audio(
         messages = [messages[0]] + messages[-(max_messages):]
         _sessions[session_id] = messages
     
-    # Make request
-    response = client.chat.completions.create(
-        model=config.OPENROUTER_MODEL,
-        messages=messages,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        extra_headers={
-            "HTTP-Referer": config.OPENROUTER_SITE_URL or "",
-            "X-Title": config.OPENROUTER_APP_NAME,
-        },
-    )
+    # Prepare request payload
+    # Request both text and audio modalities for audio-capable models
+    payload = {
+        "model": config.OPENROUTER_MODEL,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "stream": True,  # Required for audio output
+        "modalities": ["text", "audio"],
+        "audio": {"voice": tts_voice or "alloy", "format": "pcm16"},  # pcm16 required for streaming
+    }
     
-    text = response.choices[0].message.content
-    messages.append({"role": "assistant", "content": text})
+    # Make request with httpx to properly send custom auth header
+    headers = {
+        "Content-Type": "application/json",
+        "x-custom-auth-key": auth_key,
+        "HTTP-Referer": config.OPENROUTER_SITE_URL or "",
+        "X-Title": config.OPENROUTER_APP_NAME,
+    }
     
-    # Generate TTS if enabled
+    # DEBUG: Print what we're sending
+    print(f"[DEBUG] URL: {config.OPENROUTER_BASE_URL}/chat/completions")
+    print(f"[DEBUG] Auth key: {'***' if auth_key else 'NOT SET'}")
+    
+    try:
+        # Handle streaming response for audio output
+        print(f"[DEBUG] Sending streaming request with modalities: {payload['modalities']}")
+        
+        with httpx.stream(
+            "POST",
+            f"{config.OPENROUTER_BASE_URL}/chat/completions",
+            json=payload,
+            headers=headers,
+            timeout=60.0,
+        ) as response:
+            print(f"[DEBUG] Response status: {response.status_code}")
+            print(f"[DEBUG] Response headers: {dict(response.headers)}")
+            
+            if response.status_code != 200:
+                error_text = response.read().decode()
+                raise RuntimeError(f"API error: {response.status_code} - {error_text}")
+            
+            # Check if response is JSON or SSE
+            content_type = response.headers.get("content-type", "")
+            print(f"[DEBUG] Content-Type: {content_type}")
+            
+            text_parts = []
+            audio_parts = []
+            
+            if "application/json" in content_type:
+                # Complete JSON response (non-streaming)
+                response_body = response.read()
+                if isinstance(response_body, bytes):
+                    response_body = response_body.decode('utf-8')
+                print(f"[DEBUG] Response body type: {type(response_body)}")
+                print(f"[DEBUG] Response body preview: {response_body[:200]}...")
+
+                # Try to parse as JSON; if the body is actually SSE text
+                # (e.g. intermediate server forwarded raw SSE with wrong content-type),
+                # fall back to SSE parsing below.
+                try:
+                    data = json.loads(response_body)
+                except json.JSONDecodeError:
+                    data = None
+
+                if isinstance(data, dict):
+                    print(f"[DEBUG] Complete response received, data type: {type(data)}")
+                    if data.get("choices"):
+                        message = data["choices"][0].get("message", {})
+                        content = message.get("content")
+
+                        if isinstance(content, str):
+                            text_parts.append(content)
+                        elif isinstance(content, list):
+                            for block in content:
+                                if block.get("type") == "text":
+                                    text_parts.append(block.get("text", ""))
+                                elif block.get("type") == "audio":
+                                    audio_chunk = block.get("audio", {}).get("data", "")
+                                    if audio_chunk:
+                                        audio_parts.append(audio_chunk)
+                else:
+                    # Response body is not valid JSON dict.
+                    # If json.loads returned a string, the server JSON-encoded the SSE text;
+                    # use the decoded string (which has real newlines). Otherwise use raw body.
+                    sse_text = data if isinstance(data, str) else response_body
+                    print(f"[DEBUG] Parsing as SSE (json-decoded={isinstance(data, str)}, length={len(sse_text)})")
+                    debug_chunk_count = 0
+                    debug_skipped = 0
+                    for line in sse_text.splitlines():
+                        line = line.strip()
+                        if not line or line.startswith(":"):
+                            continue
+                        if line.startswith("data: "):
+                            line = line[6:]
+                        if line == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(line)
+                            if not isinstance(chunk, dict):
+                                debug_skipped += 1
+                                continue
+                            choices = chunk.get("choices", [])
+                            if not choices:
+                                debug_skipped += 1
+                                continue
+                            choice = choices[0]
+                            # Print first 3 chunks for debugging
+                            if debug_chunk_count < 3:
+                                print(f"[DEBUG] SSE chunk {debug_chunk_count} keys: {list(choice.keys())}")
+                                delta = choice.get("delta", {})
+                                print(f"[DEBUG]   delta keys: {list(delta.keys()) if isinstance(delta, dict) else type(delta)}")
+                                if isinstance(delta, dict) and delta.get("audio"):
+                                    print(f"[DEBUG]   audio keys: {list(delta['audio'].keys())}")
+                            debug_chunk_count += 1
+                            # Handle both streaming (delta) and non-streaming (message) formats
+                            delta = choice.get("delta") or choice.get("message") or {}
+                            if isinstance(delta, dict):
+                                if delta.get("content"):
+                                    text_parts.append(delta["content"])
+                                if delta.get("audio"):
+                                    audio_data_chunk = delta["audio"].get("data", "")
+                                    if audio_data_chunk:
+                                        audio_parts.append(audio_data_chunk)
+                                    # Also capture transcript as text
+                                    transcript = delta["audio"].get("transcript", "")
+                                    if transcript:
+                                        text_parts.append(transcript)
+                        except (json.JSONDecodeError, IndexError, TypeError):
+                            debug_skipped += 1
+                            continue
+                    print(f"[DEBUG] SSE parsing: {debug_chunk_count} chunks parsed, {debug_skipped} skipped")
+            else:
+                # SSE streaming response
+                for line in response.iter_lines():
+                    if not line:
+                        continue
+                    
+                    line_str = line.decode('utf-8') if isinstance(line, bytes) else line
+                    
+                    # Skip "data: " prefix for SSE format
+                    if line_str.startswith("data: "):
+                        line_str = line_str[6:]
+                    
+                    if line_str == "[DONE]":
+                        break
+                    
+                    try:
+                        chunk = json.loads(line_str)
+                        if not isinstance(chunk, dict):
+                            continue
+                        choices = chunk.get("choices", [])
+                        if not choices:
+                            continue
+                        choice = choices[0]
+                        delta = choice.get("delta") or choice.get("message") or {}
+
+                        # Handle text delta
+                        if isinstance(delta, dict):
+                            if delta.get("content"):
+                                text_parts.append(delta["content"])
+
+                            # Handle audio delta
+                            if delta.get("audio"):
+                                audio_chunk = delta["audio"].get("data", "")
+                                if audio_chunk:
+                                    audio_parts.append(audio_chunk)
+                                # Also capture transcript as text
+                                transcript = delta["audio"].get("transcript", "")
+                                if transcript:
+                                    text_parts.append(transcript)
+
+                    except (json.JSONDecodeError, IndexError, TypeError):
+                        continue
+            
+            text = "".join(text_parts) if text_parts else "[No text response]"
+            audio_data = "".join(audio_parts) if audio_parts else None
+            
+            print(f"[DEBUG] Response complete. Text length: {len(text)}, Audio chunks: {len(audio_parts)}")
+            if audio_data:
+                print(f"[DEBUG] Total audio data length: {len(audio_data)}")
+        
+        # For now, don't add assistant to session to avoid 400 errors on next turn
+        # The intermediate server handles session state
+        # messages.append({"role": "assistant", "content": text})
+        
+    except httpx.HTTPStatusError as e:
+        raise RuntimeError(f"API error: {e.response.status_code} - {e.response.text}") from e
+    except Exception as e:
+        raise RuntimeError(f"Request failed: {e}")
+    
+    # Save audio from model response if available, otherwise generate TTS
     audio_path = None
-    if config.CLOUD_TTS_PROVIDER == "openai" and config.OPENAI_API_KEY:
+    if audio_data:
+        # Save audio data from model response (pcm16 format)
+        import tempfile
+        import wave
+        import struct
+        
+        # Decode base64 pcm16 data
+        pcm_data = base64.b64decode(audio_data)
+        
+        # Convert pcm16 to WAV
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            audio_path = f.name
+            
+        # Write WAV file with proper header
+        with wave.open(audio_path, 'wb') as wav_file:
+            wav_file.setnchannels(1)  # Mono
+            wav_file.setsampwidth(2)  # 16-bit = 2 bytes
+            wav_file.setframerate(24000)  # Standard rate for GPT audio
+            wav_file.writeframes(pcm_data)
+        
+        print(f"[DEBUG] Audio saved from model response (pcm16->wav): {audio_path}")
+    elif config.CLOUD_TTS_PROVIDER == "openai" and config.OPENAI_API_KEY:
         audio_path = _generate_tts(text, tts_voice or config.OPENAI_TTS_VOICE)
     
     elapsed_ms = int((time.time() - start_time) * 1000)

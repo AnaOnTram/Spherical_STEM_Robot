@@ -92,8 +92,6 @@ LLM_CHAT_LOCAL_AUTO_START = os.getenv("LLM_CHAT_LOCAL_AUTO_START", "true").lower
 
 # LFM2.5 model paths (for local server helpers/scripts)
 _DEFAULT_LFM_MODEL_DIR = "/home/admin/model"
-if platform.system() == "Darwin":
-    _DEFAULT_LFM_MODEL_DIR = "/Users/ross/Documents/project/liquid"
 
 LFM_MODEL_DIR = os.getenv("LFM_MODEL_DIR", _DEFAULT_LFM_MODEL_DIR)
 LFM_MODEL_PATH = os.getenv("LFM_MODEL_PATH", f"{LFM_MODEL_DIR}/LFM2.5-Audio-1.5B-Q4_0.gguf")
@@ -101,10 +99,13 @@ LFM_MMPROJ_PATH = os.getenv("LFM_MMPROJ_PATH", f"{LFM_MODEL_DIR}/mmproj-LFM2.5-A
 LFM_TOKENIZER_PATH = os.getenv("LFM_TOKENIZER_PATH", f"{LFM_MODEL_DIR}/tokenizer-LFM2.5-Audio-1.5B-Q4_0.gguf")
 LFM_VOCODER_PATH = os.getenv("LFM_VOCODER_PATH", f"{LFM_MODEL_DIR}/vocoder-LFM2.5-Audio-1.5B-Q4_0.gguf")
 
-# LLM Chat (OpenRouter)
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini-audio-preview")
+# LLM Chat (OpenRouter via Intermediate Server)
+# Intermediate server at http://162.141.92.169:3000
+# INTERMEDIATE_SERVER_AUTH: Custom auth key for intermediate server (NOT the OpenRouter API key)
+INTERMEDIATE_SERVER_AUTH = os.getenv("INTERMEDIATE_SERVER_AUTH")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")  # Real OpenRouter API key (used by intermediate server)
+OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "http://162.141.92.169:3000/v1")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-audio")
 OPENROUTER_SITE_URL = os.getenv("OPENROUTER_SITE_URL")
 OPENROUTER_APP_NAME = os.getenv("OPENROUTER_APP_NAME", "Spherical Robot")
 OPENROUTER_MAX_TOKENS = int(os.getenv("OPENROUTER_MAX_TOKENS", "512"))
@@ -113,6 +114,6 @@ OPENROUTER_TEMPERATURE = float(os.getenv("OPENROUTER_TEMPERATURE", "0.3"))
 # Cloud TTS (used after OpenRouter text response)
 CLOUD_TTS_PROVIDER = os.getenv("CLOUD_TTS_PROVIDER", "openai")  # openai|none
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OPENAI_TTS_MODEL = os.getenv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
+OPENAI_TTS_MODEL = os.getenv("OPENAI_TTS_MODEL", "openai/gpt-audio")
 OPENAI_TTS_VOICE = os.getenv("OPENAI_TTS_VOICE", "alloy")
 OPENAI_TTS_FORMAT = os.getenv("OPENAI_TTS_FORMAT", "wav")

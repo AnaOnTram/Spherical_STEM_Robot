@@ -2,8 +2,8 @@
 Devoting in building stories with both wonderful childs and their loving parents.
 
 ## Project Components
-- [ ] [Raspberry Pi 5 4GB](https://www.digikey.com/en/products/detail/raspberry-pi/SC1431/21658261)
-- [ ] [Pi 5 stock Aluminum heatsink](https://www.digikey.com/en/products/detail/raspberry-pi/SC1148/21658255)
+- [x] [Raspberry Pi 5 4GB](https://www.digikey.com/en/products/detail/raspberry-pi/SC1431/21658261)
+- [x] [Pi 5 stock Aluminum heatsink](https://www.digikey.com/en/products/detail/raspberry-pi/SC1148/21658255)
 - [x] [ESP32](https://www.waveshare.com/e-paper-esp32-driver-board.htm?srsltid=AfmBOooVDNgk-HFykA8Ws8oFT9lrV8T0cf_o-iDSYbRKhV2WtcnhanRq)
 - [x] [4.2" E-ink Display](https://www.waveshare.com/pico-epaper-4.2.htm)
 - [x] [5MP USB Camera module with dual mics](https://www.aliexpress.com/item/1005010376859139.html)
@@ -40,6 +40,10 @@ pip install -r requirements.txt
 * Compile the [ESP32 sketch](/esp32/esp32_firmware/esp32_firmware.ino) using Arduino IDE.
 * Connect ESP32, USB Cam, and USB sound card to the Pi5
 * Start the program
+* Set the keys if you would like to use the cloud inference service.[^3]
+```bash
+export INTERMEDIATE_SERVER_AUTH=[your-authentication-key]
+```
 ```bash
 python main.py
 ```
@@ -51,4 +55,6 @@ python main.py
 
 [^2]: Implemented via ESP32  
   ESP32 is connected to Raspberry Pi 5 through USB serial (appears as `/dev/ttyACM0` on Pi 5)
+
+[^3]: The current cloud inference service adopts a self-hosted API transfer node (VPN-liked) as GPT/Gemini are currently unavailable in Hong Kong. You may directly use the OpenAI API platform or use 3rd party platform like openrouter.
 
