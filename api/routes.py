@@ -7,6 +7,8 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
+import sys
+import importlib
 
 from fastapi import FastAPI, File, HTTPException, Response, UploadFile, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,6 +20,25 @@ logger = logging.getLogger(__name__)
 # Temporary directory for uploaded audio files
 TEMP_AUDIO_DIR = Path(tempfile.gettempdir()) / "spherical_bot_audio"
 TEMP_AUDIO_DIR.mkdir(exist_ok=True)
+
+
+def _import_llm_chat():
+    """Import LLM chat module with repo root on sys.path (for direct runs)."""
+    candidates = ["LLM_Chat.service", "llm_chat.service", "LLM_Chat", "llm_chat"]
+    repo_root = Path(__file__).resolve().parents[1]
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+    last_error = None
+    for name in candidates:
+        try:
+            return importlib.import_module(name)
+        except ModuleNotFoundError as e:
+            last_error = e
+        except ImportError as e:
+            # If package __init__ fails, try service module directly
+            last_error = e
+            continue
+    raise ModuleNotFoundError("Could not import LLM_Chat or llm_chat") from last_error
 
 
 # Request/Response models
@@ -61,6 +82,29 @@ class AlarmSettingsRequest(BaseModel):
     enabled: bool = True
     threshold: float = Field(0.8, ge=0.0, le=1.0)
     detection_duration: float = Field(3.0, ge=1.0, le=30.0)
+
+
+class LLMChatRequest(BaseModel):
+    """LLM voice chat request."""
+    duration: float = Field(4.0, ge=0.5, le=30.0, description="Recording duration in seconds")
+    session_id: Optional[str] = Field(None, description="Session id for multi-turn chat")
+    reset: bool = Field(False, description="Reset session context")
+    max_tokens: int = Field(512, ge=16, le=2048)
+    temperature: float = Field(0.3, ge=0.0, le=2.0)
+    play_audio: bool = Field(True, description="Play response audio locally")
+    system_prompt: Optional[str] = Field(None, description="Override system prompt")
+    tts_voice: Optional[str] = Field(None, description="TTS voice for cloud provider")
+
+
+class LLMChatResponse(BaseModel):
+    """LLM voice chat response."""
+    success: bool
+    session_id: str
+    text: str
+    transcript: Optional[str] = None
+    audio_file: Optional[str] = None
+    provider: str
+    elapsed_ms: int
 
 
 # Global app state (set by main.py)
@@ -475,6 +519,98 @@ def create_app() -> FastAPI:
             "available": True,
             "is_playing": player.is_playing
         }
+
+    # LLM voice chat
+    @app.post("/api/llm_chat/local", response_model=LLMChatResponse)
+    async def llm_chat_local(request: LLMChatRequest):
+        """Local LFM2.5 voice chat using the USB mic and speaker."""
+        audio_rec = _app_state.get("audio_recorder")
+        audio_player = _app_state.get("audio_player")
+        if not audio_rec or not audio_rec.is_recording:
+            raise HTTPException(status_code=503, detail="Audio recorder not available")
+
+        llm_chat = _import_llm_chat()
+        local_chat_with_audio = llm_chat.local_chat_with_audio
+        reset_session = llm_chat.reset_session
+
+        if request.reset and request.session_id:
+            reset_session(request.session_id)
+
+        # Record audio to temp WAV
+        record_dir = TEMP_AUDIO_DIR / "llm_chat"
+        record_dir.mkdir(exist_ok=True)
+        record_path = record_dir / f"input_{uuid.uuid4().hex}.wav"
+
+        await asyncio.to_thread(audio_rec.record_to_file, str(record_path), request.duration)
+        wav_bytes = record_path.read_bytes()
+
+        result = await asyncio.to_thread(
+            local_chat_with_audio,
+            wav_bytes,
+            request.session_id,
+            request.reset,
+            request.max_tokens,
+            request.system_prompt,
+        )
+
+        if request.play_audio and result.audio_path and audio_player:
+            audio_player.play_file(result.audio_path)
+
+        return LLMChatResponse(
+            success=True,
+            session_id=result.session_id,
+            text=result.text,
+            transcript=result.transcript,
+            audio_file=result.audio_path,
+            provider=result.provider,
+            elapsed_ms=result.elapsed_ms,
+        )
+
+    @app.post("/api/llm_chat/cloud", response_model=LLMChatResponse)
+    async def llm_chat_cloud(request: LLMChatRequest):
+        """Cloud voice chat via OpenRouter with optional TTS playback."""
+        audio_rec = _app_state.get("audio_recorder")
+        audio_player = _app_state.get("audio_player")
+        if not audio_rec or not audio_rec.is_recording:
+            raise HTTPException(status_code=503, detail="Audio recorder not available")
+
+        llm_chat = _import_llm_chat()
+        cloud_chat_with_audio = llm_chat.cloud_chat_with_audio
+        reset_session = llm_chat.reset_session
+
+        if request.reset and request.session_id:
+            reset_session(request.session_id)
+
+        record_dir = TEMP_AUDIO_DIR / "llm_chat"
+        record_dir.mkdir(exist_ok=True)
+        record_path = record_dir / f"input_{uuid.uuid4().hex}.wav"
+
+        await asyncio.to_thread(audio_rec.record_to_file, str(record_path), request.duration)
+        wav_bytes = record_path.read_bytes()
+
+        result = await asyncio.to_thread(
+            cloud_chat_with_audio,
+            wav_bytes,
+            request.session_id,
+            request.reset,
+            request.temperature,
+            request.max_tokens,
+            request.system_prompt,
+            request.tts_voice,
+        )
+
+        if request.play_audio and result.audio_path and audio_player:
+            audio_player.play_file(result.audio_path)
+
+        return LLMChatResponse(
+            success=True,
+            session_id=result.session_id,
+            text=result.text,
+            transcript=result.transcript,
+            audio_file=result.audio_path,
+            provider=result.provider,
+            elapsed_ms=result.elapsed_ms,
+        )
 
     # Alarm control
     @app.get("/api/alarm/status")

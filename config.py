@@ -1,5 +1,8 @@
 """Configuration for Spherical Robot Pi5 Controller."""
 
+import os
+import platform
+
 # Serial Communication
 # For Raspberry Pi 5, use /dev/ttyAMA0 (UART0) or /dev/serial0
 # For USB-to-Serial adapters, use /dev/ttyUSB0 or /dev/ttyACM0
@@ -75,3 +78,41 @@ API_PORT = 8000
 # Motor Control
 MOTOR_SPEED_MIN = -255
 MOTOR_SPEED_MAX = 255
+
+# LLM Chat (Local LFM2.5)
+LLM_CHAT_LOCAL_BASE_URL = os.getenv("LLM_CHAT_LOCAL_BASE_URL", "http://127.0.0.1:8080/v1")
+LLM_CHAT_LOCAL_MODEL = os.getenv("LLM_CHAT_LOCAL_MODEL", "")
+LLM_CHAT_LOCAL_SAMPLE_RATE = 24000
+LLM_CHAT_LOCAL_SYSTEM_PROMPT = "Respond with interleaved text and audio."
+LLM_CHAT_SESSION_MAX_MESSAGES = int(os.getenv("LLM_CHAT_SESSION_MAX_MESSAGES", "20"))
+
+# Auto-start local LFM2.5 server on first request
+# Set to False if you want to start the server manually
+LLM_CHAT_LOCAL_AUTO_START = os.getenv("LLM_CHAT_LOCAL_AUTO_START", "true").lower() in ("true", "1", "yes")
+
+# LFM2.5 model paths (for local server helpers/scripts)
+_DEFAULT_LFM_MODEL_DIR = "/home/admin/model"
+if platform.system() == "Darwin":
+    _DEFAULT_LFM_MODEL_DIR = "/Users/ross/Documents/project/liquid"
+
+LFM_MODEL_DIR = os.getenv("LFM_MODEL_DIR", _DEFAULT_LFM_MODEL_DIR)
+LFM_MODEL_PATH = os.getenv("LFM_MODEL_PATH", f"{LFM_MODEL_DIR}/LFM2.5-Audio-1.5B-Q4_0.gguf")
+LFM_MMPROJ_PATH = os.getenv("LFM_MMPROJ_PATH", f"{LFM_MODEL_DIR}/mmproj-LFM2.5-Audio-1.5B-Q4_0.gguf")
+LFM_TOKENIZER_PATH = os.getenv("LFM_TOKENIZER_PATH", f"{LFM_MODEL_DIR}/tokenizer-LFM2.5-Audio-1.5B-Q4_0.gguf")
+LFM_VOCODER_PATH = os.getenv("LFM_VOCODER_PATH", f"{LFM_MODEL_DIR}/vocoder-LFM2.5-Audio-1.5B-Q4_0.gguf")
+
+# LLM Chat (OpenRouter)
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini-audio-preview")
+OPENROUTER_SITE_URL = os.getenv("OPENROUTER_SITE_URL")
+OPENROUTER_APP_NAME = os.getenv("OPENROUTER_APP_NAME", "Spherical Robot")
+OPENROUTER_MAX_TOKENS = int(os.getenv("OPENROUTER_MAX_TOKENS", "512"))
+OPENROUTER_TEMPERATURE = float(os.getenv("OPENROUTER_TEMPERATURE", "0.3"))
+
+# Cloud TTS (used after OpenRouter text response)
+CLOUD_TTS_PROVIDER = os.getenv("CLOUD_TTS_PROVIDER", "openai")  # openai|none
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_TTS_MODEL = os.getenv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
+OPENAI_TTS_VOICE = os.getenv("OPENAI_TTS_VOICE", "alloy")
+OPENAI_TTS_FORMAT = os.getenv("OPENAI_TTS_FORMAT", "wav")

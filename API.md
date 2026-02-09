@@ -12,6 +12,7 @@ WebSocket Base URL: `ws://<raspberry-pi-ip>:8000`
 - [Video Streaming](#video-streaming)
 - [Audio Streaming](#audio-streaming)
 - [Audio Playback](#audio-playback)
+- [LLM Voice Chat](#llm-voice-chat)
 - [E-Ink Display](#e-ink-display)
 - [Alarm Control](#alarm-control)
 - [WebSocket Events](#websocket-events)
@@ -244,6 +245,63 @@ GET /api/audio/playback-status
 {
   "available": true,
   "is_playing": false
+}
+```
+
+---
+
+## LLM Voice Chat
+
+These endpoints record from the robot's USB microphone for a fixed duration, send the audio to the selected LLM backend, and optionally play the returned audio on the robot speaker.
+
+### Local LFM2.5 Voice Chat
+```
+POST /api/llm_chat/local
+Content-Type: application/json
+```
+**Request Body:**
+```json
+{
+  "duration": 4.0,
+  "session_id": null,
+  "reset": false,
+  "max_tokens": 512,
+  "temperature": 0.3,
+  "play_audio": true,
+  "system_prompt": null,
+  "tts_voice": null
+}
+```
+
+### Cloud Voice Chat (OpenRouter)
+```
+POST /api/llm_chat/cloud
+Content-Type: application/json
+```
+**Request Body:** Same as above.
+
+**Request Fields:**
+| Field | Type | Default | Description |
+|------|------|---------|-------------|
+| duration | float | 4.0 | Recording duration in seconds (0.5–30) |
+| session_id | string\|null | null | Session ID for multi-turn chat |
+| reset | bool | false | Reset session context |
+| max_tokens | int | 512 | Max tokens for response |
+| temperature | float | 0.3 | Sampling temperature |
+| play_audio | bool | true | Play response audio on the robot |
+| system_prompt | string\|null | null | Override system prompt |
+| tts_voice | string\|null | null | Cloud TTS voice (if enabled) |
+
+**Response:**
+```json
+{
+  "success": true,
+  "session_id": "9b4c0d2a0f9449b0a6c7a0f0a3bdbb2f",
+  "text": "Hello! How can I help?",
+  "transcript": "hello robot",
+  "audio_file": "/tmp/spherical_bot_llm_chat/cloud_9b4c0d2a0f9449b0a6c7a0f0a3bdbb2f.wav",
+  "provider": "cloud",
+  "elapsed_ms": 1842
 }
 ```
 
