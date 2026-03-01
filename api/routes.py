@@ -3,10 +3,11 @@ import asyncio
 import logging
 import os
 import tempfile
+import threading
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 import sys
 import importlib
 
@@ -15,11 +16,34 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+import config
+
 logger = logging.getLogger(__name__)
 
 # Temporary directory for uploaded audio files
 TEMP_AUDIO_DIR = Path(tempfile.gettempdir()) / "spherical_bot_audio"
 TEMP_AUDIO_DIR.mkdir(exist_ok=True)
+
+_PROCESSING_INTERVAL = 5.0  # seconds between each "Processing. Please wait." repeat
+
+
+async def _play_processing_loop(audio_player, processing_path: str, done: threading.Event) -> None:
+    """Play 'Processing. Please wait.' repeatedly every 5 s until done is set.
+
+    Runs as an asyncio task concurrent with the LLM pipeline task.
+    Each playback is dispatched to a thread so it blocks correctly on ALSA,
+    then we wait up to 5 s before replaying — stopping as soon as done is set.
+    """
+    while not done.is_set():
+        await asyncio.to_thread(audio_player.play_file, processing_path, True)
+        # Wait up to _PROCESSING_INTERVAL seconds, but wake immediately if done
+        try:
+            await asyncio.wait_for(
+                asyncio.get_event_loop().run_in_executor(None, done.wait, _PROCESSING_INTERVAL),
+                timeout=_PROCESSING_INTERVAL + 0.1,
+            )
+        except asyncio.TimeoutError:
+            pass
 
 
 def _import_llm_chat():
@@ -62,6 +86,13 @@ class DisplayImageRequest(BaseModel):
     pattern: Optional[str] = None  # "checkerboard", "gradient", "border"
 
 
+class DisplayLessonRequest(BaseModel):
+    """Structured MCQ lesson display request."""
+    question: str = Field(..., min_length=1)
+    options: List[str] = Field(..., min_length=4, max_length=4)
+    title: str = Field("WonderBall STEM", max_length=40)
+
+
 class DisplayResponse(BaseModel):
     """Display operation response."""
     success: bool
@@ -82,6 +113,32 @@ class AlarmSettingsRequest(BaseModel):
     enabled: bool = True
     threshold: float = Field(0.8, ge=0.0, le=1.0)
     detection_duration: float = Field(3.0, ge=1.0, le=30.0)
+
+
+class TTSSpeakRequest(BaseModel):
+    """Text-to-speech request."""
+    text: str = Field(..., min_length=1, description="Text to synthesise")
+    voice: str = Field("zh-HK-HiuGaaiNeural", description="Edge TTS voice name")
+
+
+class QuizStartRequest(BaseModel):
+    """Start a quiz session."""
+    questions: Optional[List[dict]] = Field(
+        None,
+        description=(
+            "List of question dicts with keys: question, options (4 items), "
+            "correct_index (0-3), title (optional). "
+            "Omit to use the built-in DEFAULT_QUESTIONS bank."
+        ),
+    )
+    voice: str = Field("en-US-AriaNeural", description="Edge TTS voice for quiz")
+    shuffle: bool = Field(False, description="Randomise question order")
+    result_delay: float = Field(2.5, ge=0.5, le=10.0, description="Seconds to pause after each answer")
+
+
+class QuizGestureRequest(BaseModel):
+    """Manually inject a finger-count answer (for testing without a camera)."""
+    finger_count: int = Field(..., ge=1, le=4, description="Number of fingers held up: 1=A, 2=B, 3=C, 4=D")
 
 
 class LLMChatRequest(BaseModel):
@@ -119,6 +176,44 @@ _app_state = {
     "human_tracker": None,
 }
 
+# Active quiz session state (module-level so main.py detection loop can reach it)
+_quiz_state: dict = {"engine": None, "voice": "en-US-AriaNeural"}
+
+# Latest gesture detection state (updated by detection loop, read by /api/gesture/status)
+_gesture_state: dict = {
+    "gesture": "none",
+    "confidence": 0.0,
+    "handedness": "unknown",
+    "finger_count": 0,
+    "finger_states": [False, False, False, False, False],
+    "landmarks": [],
+    "hand_up": None,
+    "timestamp": None,
+}
+
+
+def update_gesture_state(
+    gesture: str,
+    confidence: float,
+    handedness: str,
+    finger_count: int,
+    finger_states: list,
+    landmarks: list,
+    hand_up=None,
+) -> None:
+    """Called by the detection loop to publish the latest gesture result."""
+    from datetime import datetime
+    _gesture_state.update({
+        "gesture": gesture,
+        "confidence": confidence,
+        "handedness": handedness,
+        "finger_count": finger_count,
+        "finger_states": finger_states,
+        "landmarks": landmarks,
+        "hand_up": hand_up,
+        "timestamp": datetime.now().isoformat(),
+    })
+
 
 def set_app_state(**kwargs) -> None:
     """Set application state components."""
@@ -144,14 +239,13 @@ def create_app() -> FastAPI:
         title="Spherical Robot API",
         description="API for controlling the spherical robot",
         version="1.0.0",
-        lifespan=lifespan,
     )
 
     # CORS middleware
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
-        allow_credentials=True,
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -161,6 +255,11 @@ def create_app() -> FastAPI:
     async def health_check():
         """Health check endpoint."""
         return {"status": "ok"}
+
+    @app.get("/api/gesture/status")
+    async def get_gesture_status():
+        """Latest gesture detection result (poll this for debugging)."""
+        return _gesture_state
 
     # System status
     @app.get("/api/status", response_model=StatusResponse)
@@ -292,6 +391,38 @@ def create_app() -> FastAPI:
             success=response.status == ResponseStatus.OK,
             message=response.message or "Display cleared",
         )
+
+    @app.post("/api/display/lesson", response_model=DisplayResponse)
+    async def display_lesson(request: DisplayLessonRequest):
+        """Render a structured MCQ lesson card on the e-ink display.
+
+        Accepts question + 4 option strings (emojis are stripped server-side).
+        Generates a properly laid-out 400×300 1-bit image using a CJK font.
+        """
+        serial_mgr = _app_state.get("serial_manager")
+        img_processor = _app_state.get("image_processor")
+
+        if not serial_mgr or not img_processor:
+            raise HTTPException(status_code=503, detail="Components not available")
+
+        from esp_serial.commands import CommandBuilder
+        from esp_serial.protocol import ResponseStatus
+
+        try:
+            packed = img_processor.render_lesson(
+                question=request.question,
+                options=request.options,
+                title=request.title,
+            )
+            cmd = CommandBuilder.display_image(packed)
+            response = await serial_mgr.send_command_async(cmd)
+            return DisplayResponse(
+                success=response.status == ResponseStatus.OK,
+                message=response.message or "Lesson displayed",
+            )
+        except Exception as e:
+            logger.error(f"Lesson display error: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
 
     # Video streaming
     @app.get("/api/stream/video")
@@ -520,6 +651,49 @@ def create_app() -> FastAPI:
             "is_playing": player.is_playing
         }
 
+    # Text-to-speech (server-side, supports Cantonese and all Edge TTS languages)
+    @app.post("/api/tts/speak")
+    async def tts_speak(request: TTSSpeakRequest):
+        """Synthesise text with Edge TTS and play it on the robot speaker.
+
+        Uses Microsoft Edge TTS (requires internet).  Default voice is
+        zh-HK-HiuGaaiNeural (Cantonese).  Other voices:
+          zh-HK-WanLungNeural  – Cantonese male
+          en-US-AriaNeural     – English female
+        """
+        player = _app_state.get("audio_player")
+        if not player:
+            raise HTTPException(status_code=503, detail="Audio player not available")
+
+        try:
+            import edge_tts
+        except ImportError:
+            raise HTTPException(
+                status_code=503,
+                detail="edge-tts not installed. Run: pip install edge-tts",
+            )
+
+        file_id = str(uuid.uuid4())
+        temp_path = TEMP_AUDIO_DIR / f"tts_{file_id}.mp3"
+
+        try:
+            communicate = edge_tts.Communicate(request.text, request.voice)
+            await communicate.save(str(temp_path))
+        except Exception as e:
+            logger.error(f"Edge TTS synthesis error: {e}")
+            raise HTTPException(status_code=500, detail=f"TTS synthesis failed: {e}")
+
+        # Play in background thread and clean up the temp file when done
+        def _play_and_cleanup():
+            try:
+                player.play_file(str(temp_path), blocking=True)
+            finally:
+                temp_path.unlink(missing_ok=True)
+
+        threading.Thread(target=_play_and_cleanup, daemon=True).start()
+
+        return {"success": True, "message": f"Speaking ({request.voice})"}
+
     # LLM voice chat
     @app.post("/api/llm_chat/local", response_model=LLMChatResponse)
     async def llm_chat_local(request: LLMChatRequest):
@@ -530,7 +704,6 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=503, detail="Audio recorder not available")
 
         llm_chat = _import_llm_chat()
-        local_chat_with_audio = llm_chat.local_chat_with_audio
         reset_session = llm_chat.reset_session
 
         if request.reset and request.session_id:
@@ -544,14 +717,50 @@ def create_app() -> FastAPI:
         await asyncio.to_thread(audio_rec.record_to_file, str(record_path), request.duration)
         wav_bytes = record_path.read_bytes()
 
-        result = await asyncio.to_thread(
-            local_chat_with_audio,
-            wav_bytes,
-            request.session_id,
-            request.reset,
-            request.max_tokens,
-            request.system_prompt,
-        )
+        # Play "Processing. Please wait." every 5s until the pipeline finishes.
+        # Both the loop task and the LLM pipeline run concurrently; done_event
+        # signals the loop to stop as soon as a result is ready.
+        llm_chat_pre = _import_llm_chat()
+        processing_path = llm_chat_pre.get_processing_audio_path()
+        done_event = threading.Event()
+
+        if audio_player and processing_path:
+            processing_task = asyncio.create_task(
+                _play_processing_loop(audio_player, processing_path, done_event)
+            )
+        else:
+            processing_task = None
+
+        try:
+            # Check if we should use separate ASR/TTS services or full LFM audio model
+            if getattr(config, 'USE_LOCAL_ASR_TTS', False):
+                # Use separate ASR + LLM + TTS pipeline
+                local_chat_with_separate_asr_tts = llm_chat.local_chat_with_separate_asr_tts
+                result = await asyncio.to_thread(
+                    local_chat_with_separate_asr_tts,
+                    wav_bytes,
+                    request.session_id,
+                    request.reset,
+                    request.max_tokens,
+                    0.3,  # temperature
+                    request.system_prompt,
+                )
+            else:
+                # Use full LFM audio model
+                local_chat_with_audio = llm_chat.local_chat_with_audio
+                result = await asyncio.to_thread(
+                    local_chat_with_audio,
+                    wav_bytes,
+                    request.session_id,
+                    request.reset,
+                    request.max_tokens,
+                    request.system_prompt,
+                )
+        finally:
+            # Stop the processing loop regardless of success or failure
+            done_event.set()
+            if processing_task:
+                await processing_task
 
         if request.play_audio and result.audio_path and audio_player:
             audio_player.play_file(result.audio_path)
@@ -588,16 +797,33 @@ def create_app() -> FastAPI:
         await asyncio.to_thread(audio_rec.record_to_file, str(record_path), request.duration)
         wav_bytes = record_path.read_bytes()
 
-        result = await asyncio.to_thread(
-            cloud_chat_with_audio,
-            wav_bytes,
-            request.session_id,
-            request.reset,
-            request.temperature,
-            request.max_tokens,
-            request.system_prompt,
-            request.tts_voice,
-        )
+        # Play "Processing. Please wait." every 5s until the cloud LLM call finishes.
+        llm_chat_pre = _import_llm_chat()
+        processing_path = llm_chat_pre.get_processing_audio_path()
+        done_event = threading.Event()
+
+        if audio_player and processing_path:
+            processing_task = asyncio.create_task(
+                _play_processing_loop(audio_player, processing_path, done_event)
+            )
+        else:
+            processing_task = None
+
+        try:
+            result = await asyncio.to_thread(
+                cloud_chat_with_audio,
+                wav_bytes,
+                request.session_id,
+                request.reset,
+                request.temperature,
+                request.max_tokens,
+                request.system_prompt,
+                request.tts_voice,
+            )
+        finally:
+            done_event.set()
+            if processing_task:
+                await processing_task
 
         if request.play_audio and result.audio_path and audio_player:
             audio_player.play_file(result.audio_path)
@@ -759,5 +985,154 @@ def create_app() -> FastAPI:
             "success": response.status == ResponseStatus.OK,
             "message": response.message or "Reset sent",
         }
+
+    # -----------------------------------------------------------------------
+    # Quiz endpoints  (education/quiz_engine.py)
+    # -----------------------------------------------------------------------
+
+    @app.post("/api/quiz/start")
+    async def quiz_start(request: QuizStartRequest):
+        """Start an interactive MCQ quiz session.
+
+        Renders each question on the E-ink display and reads it aloud via
+        Edge TTS.  Answers are accepted by holding up fingers in front of
+        the camera (MediaPipe finger counting):
+          1 finger → A   2 fingers → B   3 fingers → C   4 fingers → D
+        """
+        from education.quiz_engine import QuizEngine, QuizQuestion, DEFAULT_QUESTIONS
+
+        img_processor = _app_state.get("image_processor")
+        serial_mgr = _app_state.get("serial_manager")
+        player = _app_state.get("audio_player")
+
+        # Stop any running quiz first
+        if _quiz_state["engine"] is not None:
+            await _quiz_state["engine"].stop()
+            _quiz_state["engine"] = None
+
+        # Build question list
+        if request.questions:
+            try:
+                questions = [
+                    QuizQuestion(
+                        question=q["question"],
+                        options=q["options"],
+                        correct_index=q["correct_index"],
+                        title=q.get("title", "WonderBall STEM"),
+                    )
+                    for q in request.questions
+                ]
+            except (KeyError, ValueError) as exc:
+                raise HTTPException(status_code=422, detail=f"Invalid question format: {exc}")
+        else:
+            questions = list(DEFAULT_QUESTIONS)
+
+        _quiz_state["voice"] = request.voice
+
+        # --- TTS function (async, non-blocking) ---
+        async def _tts(text: str) -> None:
+            if not player:
+                return
+            try:
+                import edge_tts
+            except ImportError:
+                logger.warning("edge-tts not installed; quiz will run silently")
+                return
+            file_id = str(uuid.uuid4())
+            temp_path = TEMP_AUDIO_DIR / f"quiz_tts_{file_id}.mp3"
+            try:
+                communicate = edge_tts.Communicate(text, request.voice)
+                await communicate.save(str(temp_path))
+                # Play blocking in thread so TTS finishes before next step
+                await asyncio.to_thread(player.play_file, str(temp_path), True)
+            except Exception as exc:
+                logger.error(f"Quiz TTS error: {exc}")
+            finally:
+                temp_path.unlink(missing_ok=True)
+
+        # --- Display function ---
+        async def _display(question: str, options: list, title: str) -> None:
+            if not img_processor or not serial_mgr:
+                return
+            try:
+                from esp_serial.commands import CommandBuilder
+                packed = img_processor.render_lesson(
+                    question=question, options=options, title=title
+                )
+                cmd = CommandBuilder.display_image(packed)
+                await serial_mgr.send_command_async(cmd)
+            except Exception as exc:
+                logger.error(f"Quiz display error: {exc}")
+
+        engine = QuizEngine(
+            questions=questions,
+            tts_fn=_tts,
+            display_fn=_display,
+            result_delay=request.result_delay,
+            shuffle=request.shuffle,
+        )
+        _quiz_state["engine"] = engine
+
+        # Fire quiz in background so this endpoint returns immediately
+        asyncio.create_task(engine.start())
+
+        return {
+            "success": True,
+            "message": f"Quiz started with {len(questions)} questions",
+            "total_questions": len(questions),
+        }
+
+    @app.get("/api/quiz/status")
+    async def quiz_status():
+        """Return current quiz state and score."""
+        engine = _quiz_state.get("engine")
+        if engine is None:
+            return {"active": False, "state": "idle", "score": 0, "total": 0}
+
+        from education.quiz_engine import QuizState
+        q_index = engine._index
+        questions = engine._questions
+        current_q = questions[q_index] if q_index < len(questions) else None
+
+        return {
+            "active": engine.state not in (QuizState.IDLE, QuizState.COMPLETED),
+            "state": engine.state.value,
+            "question_index": q_index,
+            "total_questions": engine.total,
+            "score": engine.score,
+            "current_question": current_q.question if current_q else None,
+            "options": current_q.options if current_q else [],
+            "correct_answer_index": (
+                questions[q_index - 1].correct_index if q_index > 0 else None
+            ),
+            "last_answer_correct": engine._last_correct,
+        }
+
+    @app.post("/api/quiz/gesture")
+    async def quiz_inject_gesture(request: QuizGestureRequest):
+        """Manually inject a finger-count answer (useful for testing without camera).
+
+        finger_count: 1=A, 2=B, 3=C, 4=D
+        """
+        engine = _quiz_state.get("engine")
+        if engine is None:
+            raise HTTPException(status_code=404, detail="No active quiz session")
+
+        handled = engine.handle_finger_count(request.finger_count)
+        return {
+            "success": True,
+            "handled": handled,
+            "message": "Gesture processed" if handled else "Gesture ignored (not waiting for answer)",
+        }
+
+    @app.post("/api/quiz/stop")
+    async def quiz_stop():
+        """Stop the current quiz session."""
+        engine = _quiz_state.get("engine")
+        if engine is None:
+            return {"success": True, "message": "No active quiz to stop"}
+        await engine.stop()
+        _quiz_state["engine"] = None
+        return {"success": True, "message": "Quiz stopped"}
 
     return app

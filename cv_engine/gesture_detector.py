@@ -1,5 +1,6 @@
-"""Hand gesture detection using MediaPipe or TFLite fallback."""
+"""Hand gesture detection using MediaPipe Tasks GestureRecognizer."""
 import logging
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -13,16 +14,40 @@ try:
 except ImportError:
     cv2 = None
 
-# MediaPipe is not available on ARM64 (Raspberry Pi)
-# Try to import, fall back to TFLite-based detection
+# MediaPipe Tasks API (mediapipe >= 0.10)
 try:
+    from mediapipe.tasks import python as mp_tasks
+    from mediapipe.tasks.python import vision as mp_vision
     import mediapipe as mp
     MEDIAPIPE_AVAILABLE = True
-except ImportError:
+except ImportError as _mp_err:
+    mp_tasks = None
+    mp_vision = None
     mp = None
     MEDIAPIPE_AVAILABLE = False
+    logging.getLogger(__name__).warning(f"MediaPipe not available: {_mp_err}")
 
 logger = logging.getLogger(__name__)
+
+# Default model URL (MediaPipe GestureRecognizer float16 task bundle)
+_MODEL_URL = (
+    "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/"
+    "gesture_recognizer/float16/latest/gesture_recognizer.task"
+)
+# Local cache path so we only download once
+_MODEL_CACHE = Path(__file__).parent / "models" / "gesture_recognizer.task"
+
+# Map MediaPipe category names → our Gesture enum values
+_MP_GESTURE_MAP = {
+    "None":        "none",
+    "Closed_Fist": "closed_fist",
+    "Open_Palm":   "open_palm",
+    "Pointing_Up": "pointing_up",
+    "Thumb_Up":    "thumbs_up",
+    "Thumb_Down":  "thumbs_down",
+    "Victory":     "peace",
+    "ILoveYou":    "ok",
+}
 
 
 class Gesture(Enum):
@@ -33,8 +58,8 @@ class Gesture(Enum):
     POINTING_UP = "pointing_up"
     THUMBS_UP = "thumbs_up"
     THUMBS_DOWN = "thumbs_down"
-    PEACE = "peace"  # V sign
-    OK = "ok"  # OK sign
+    PEACE = "peace"   # V / Victory sign
+    OK = "ok"         # ILoveYou / OK sign
     WAVE = "wave"
 
 
@@ -44,12 +69,20 @@ class GestureEvent:
     gesture: Gesture
     confidence: float
     timestamp: datetime
-    hand_landmarks: Optional[list] = None
-    handedness: str = "unknown"  # "Left" or "Right"
+    hand_landmarks: Optional[list] = None   # list of NormalizedLandmark
+    handedness: str = "unknown"             # "Left" or "Right"
 
 
 class GestureDetector:
-    """Hand gesture detector using MediaPipe Hands or TFLite fallback."""
+    """Hand gesture detector using MediaPipe Tasks GestureRecognizer.
+
+    Uses the official MediaPipe Tasks API (mediapipe >= 0.10) with the
+    gesture_recognizer.task model bundle.  The model is downloaded once and
+    cached locally at cv_engine/models/gesture_recognizer.task.
+
+    Falls back to a basic skin-colour contour approach when MediaPipe is not
+    installed so that the rest of the system keeps running.
+    """
 
     def __init__(
         self,
@@ -61,412 +94,377 @@ class GestureDetector:
         self.min_detection_confidence = min_detection_confidence
         self.min_tracking_confidence = min_tracking_confidence
         self.max_num_hands = max_num_hands
+        # Allow caller to supply a pre-downloaded model path
         self.model_path = model_path
 
-        self._hands = None
-        self._tflite_interpreter = None
+        self._recognizer: Optional[object] = None   # GestureRecognizer instance
         self._initialized = False
         self._use_mediapipe = MEDIAPIPE_AVAILABLE
         self._callbacks: list[Callable[[GestureEvent], None]] = []
 
+    # ------------------------------------------------------------------
+    # Initialisation
+    # ------------------------------------------------------------------
+
     def _check_deps(self) -> None:
-        """Check dependencies."""
         if cv2 is None:
-            raise RuntimeError("OpenCV not installed. Install with: pip install opencv-python")
+            raise RuntimeError(
+                "OpenCV not installed. Install with: pip install opencv-python"
+            )
 
     def initialize(self) -> bool:
-        """Initialize gesture detector (MediaPipe or TFLite fallback)."""
+        """Initialize the gesture detector."""
         self._check_deps()
 
-        # Try MediaPipe first (x86/x64 systems)
         if MEDIAPIPE_AVAILABLE:
             try:
-                self._hands = mp.solutions.hands.Hands(
-                    static_image_mode=False,
-                    max_num_hands=self.max_num_hands,
-                    min_detection_confidence=self.min_detection_confidence,
-                    min_tracking_confidence=self.min_tracking_confidence,
-                )
+                self._init_mediapipe_tasks()
                 self._use_mediapipe = True
                 self._initialized = True
-                logger.info("Gesture detector initialized with MediaPipe")
+                logger.info("GestureDetector initialised with MediaPipe Tasks GestureRecognizer")
                 return True
-            except Exception as e:
-                logger.warning(f"MediaPipe init failed: {e}, trying TFLite fallback")
+            except Exception as exc:
+                logger.warning(f"MediaPipe Tasks init failed: {exc} — falling back to basic detection")
 
-        # TFLite fallback for ARM64 (Raspberry Pi)
-        try:
-            self._init_tflite()
-            self._use_mediapipe = False
-            self._initialized = True
-            logger.info("Gesture detector initialized with TFLite fallback")
-            return True
-        except Exception as e:
-            logger.warning(f"TFLite fallback not available: {e}")
-
-        # Final fallback: simple motion-based detection
+        # Basic skin-colour fallback (no ML)
         self._use_mediapipe = False
         self._initialized = True
-        logger.info("Gesture detector initialized with basic detection (no ML)")
+        logger.info("GestureDetector initialised with basic skin-colour detection (no ML)")
         return True
 
-    def _init_tflite(self) -> None:
-        """Initialize TFLite hand detection model."""
-        tflite = None
-
-        try:
-            import tflite_runtime.interpreter as tflite
-        except ImportError:
-            try:
-                import tensorflow.lite as tflite
-            except ImportError:
-                try:
-                    import tensorflow as tf
-                    tflite = tf.lite
-                except ImportError:
-                    pass
-
-        if tflite is None:
-            raise RuntimeError("TFLite runtime not available")
-
-        # Look for hand detection model
-        model_file = None
+    def _resolve_model_path(self) -> Path:
+        """Return a local path to the .task model, downloading if needed."""
         if self.model_path:
-            model_file = Path(self.model_path)
-        else:
-            # Check common locations
-            search_paths = [
-                Path(__file__).parent / "models" / "hand_landmark_lite.tflite",
-                Path(__file__).parent / "models" / "palm_detection_lite.tflite",
-                Path("/usr/share/tflite_models/hand_landmark.tflite"),
-            ]
-            for path in search_paths:
-                if path.exists():
-                    model_file = path
-                    break
+            p = Path(self.model_path)
+            if not p.exists():
+                raise FileNotFoundError(f"Supplied model path not found: {p}")
+            return p
 
-        if model_file and model_file.exists():
-            self._tflite_interpreter = tflite.Interpreter(model_path=str(model_file))
-            self._tflite_interpreter.allocate_tensors()
-            logger.info(f"Loaded TFLite model: {model_file}")
-        else:
-            logger.warning(
-                "No TFLite hand model found. Download from: "
-                "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task"
-            )
-            raise FileNotFoundError("TFLite hand model not found")
+        if _MODEL_CACHE.exists():
+            return _MODEL_CACHE
+
+        # Download from Google Storage
+        _MODEL_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Downloading GestureRecognizer model from {_MODEL_URL} …")
+        try:
+            urllib.request.urlretrieve(_MODEL_URL, str(_MODEL_CACHE))
+            logger.info(f"Model saved to {_MODEL_CACHE}")
+        except Exception as exc:
+            raise RuntimeError(f"Failed to download model: {exc}") from exc
+        return _MODEL_CACHE
+
+    def _init_mediapipe_tasks(self) -> None:
+        """Initialise MediaPipe Tasks GestureRecognizer (IMAGE mode)."""
+        model_path = self._resolve_model_path()
+
+        base_opts = mp_tasks.BaseOptions(model_asset_path=str(model_path))
+        options = mp_vision.GestureRecognizerOptions(
+            base_options=base_opts,
+            running_mode=mp_vision.RunningMode.IMAGE,
+            num_hands=self.max_num_hands,
+            min_hand_detection_confidence=self.min_detection_confidence,
+            min_hand_presence_confidence=self.min_detection_confidence,
+            min_tracking_confidence=self.min_tracking_confidence,
+        )
+        self._recognizer = mp_vision.GestureRecognizer.create_from_options(options)
+
+    # ------------------------------------------------------------------
+    # Detection entry point
+    # ------------------------------------------------------------------
 
     def detect(self, frame: np.ndarray) -> list[GestureEvent]:
-        """Detect hand gestures in frame.
+        """Detect hand gestures in a BGR camera frame.
 
         Args:
-            frame: BGR image frame from camera
+            frame: BGR image array from OpenCV.
 
         Returns:
-            List of detected gesture events
+            List of GestureEvent (one per detected hand).
         """
         if not self._initialized:
             if not self.initialize():
                 return []
 
-        if self._use_mediapipe and self._hands:
+        if self._use_mediapipe and self._recognizer is not None:
             return self._detect_mediapipe(frame)
-        elif self._tflite_interpreter:
-            return self._detect_tflite(frame)
-        else:
-            # Basic detection fallback (skin color based)
-            return self._detect_basic(frame)
+        return self._detect_basic(frame)
+
+    # ------------------------------------------------------------------
+    # MediaPipe Tasks detection
+    # ------------------------------------------------------------------
 
     def _detect_mediapipe(self, frame: np.ndarray) -> list[GestureEvent]:
-        """Detect using MediaPipe."""
-        # Convert BGR to RGB
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        """Run GestureRecognizer on a single BGR frame."""
+        # Convert BGR → RGB and wrap in MediaPipe Image
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
 
-        # Process frame
-        results = self._hands.process(rgb_frame)
+        try:
+            result = self._recognizer.recognize(mp_image)
+        except Exception as exc:
+            logger.error(f"GestureRecognizer.recognize() failed: {exc}")
+            return []
 
-        events = []
-        if results.multi_hand_landmarks:
-            for idx, hand_landmarks in enumerate(results.multi_hand_landmarks):
-                # Get handedness
-                handedness = "unknown"
-                if results.multi_handedness and idx < len(results.multi_handedness):
-                    handedness = results.multi_handedness[idx].classification[0].label
+        events: list[GestureEvent] = []
 
-                # Classify gesture
-                gesture, confidence = self._classify_gesture(hand_landmarks)
+        # result.gestures is a list-of-lists: one inner list per hand
+        if not result.gestures:
+            return events
 
-                event = GestureEvent(
-                    gesture=gesture,
-                    confidence=confidence,
-                    timestamp=datetime.now(),
-                    hand_landmarks=hand_landmarks.landmark,
-                    handedness=handedness,
-                )
-                events.append(event)
+        for hand_idx, hand_gestures in enumerate(result.gestures):
+            if not hand_gestures:
+                continue
 
-                # Notify callbacks
-                for callback in self._callbacks:
-                    try:
-                        callback(event)
-                    except Exception as e:
-                        logger.error(f"Gesture callback error: {e}")
+            # Top gesture category for this hand
+            top = hand_gestures[0]
+            mp_name = top.category_name          # e.g. "Victory"
+            confidence = float(top.score)
+
+            # Map to our Gesture enum
+            gesture_value = _MP_GESTURE_MAP.get(mp_name, "none")
+            try:
+                gesture = Gesture(gesture_value)
+            except ValueError:
+                gesture = Gesture.NONE
+
+            # Handedness
+            handedness = "unknown"
+            if result.handedness and hand_idx < len(result.handedness):
+                hand_cats = result.handedness[hand_idx]
+                if hand_cats:
+                    handedness = hand_cats[0].category_name  # "Left" or "Right"
+
+            # Hand landmarks (list of NormalizedLandmark)
+            landmarks = None
+            if result.hand_landmarks and hand_idx < len(result.hand_landmarks):
+                landmarks = result.hand_landmarks[hand_idx]
+
+            event = GestureEvent(
+                gesture=gesture,
+                confidence=confidence,
+                timestamp=datetime.now(),
+                hand_landmarks=landmarks,
+                handedness=handedness,
+            )
+            events.append(event)
+
+            for cb in self._callbacks:
+                try:
+                    cb(event)
+                except Exception as exc:
+                    logger.error(f"Gesture callback error: {exc}")
 
         return events
 
-    def _detect_tflite(self, frame: np.ndarray) -> list[GestureEvent]:
-        """Detect using TFLite model (simplified)."""
-        # This is a placeholder - full TFLite hand detection requires
-        # palm detection + hand landmark models working together
-        # For now, return empty and log that TFLite detection needs model setup
-        logger.debug("TFLite detection requires proper model setup")
-        return []
+    # ------------------------------------------------------------------
+    # Basic skin-colour fallback (no ML)
+    # ------------------------------------------------------------------
 
     def _detect_basic(self, frame: np.ndarray) -> list[GestureEvent]:
-        """Basic skin-color based hand detection (no ML).
+        """Simple skin-colour hand detection when MediaPipe is unavailable."""
+        events: list[GestureEvent] = []
 
-        This is a simple fallback when ML models aren't available.
-        It can detect presence of hand-like regions but not specific gestures.
-        """
-        events = []
-
-        # Convert to HSV for skin detection
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-
-        # Skin color range in HSV
         lower_skin = np.array([0, 20, 70], dtype=np.uint8)
         upper_skin = np.array([20, 255, 255], dtype=np.uint8)
-
-        # Create mask for skin color
         mask = cv2.inRange(hsv, lower_skin, upper_skin)
 
-        # Morphological operations to clean up
         kernel = np.ones((5, 5), np.uint8)
         mask = cv2.dilate(mask, kernel, iterations=2)
         mask = cv2.erode(mask, kernel, iterations=2)
 
-        # Find contours
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         for contour in contours:
             area = cv2.contourArea(contour)
-            # Filter by area (hand-sized regions)
-            if area > 5000:  # Minimum area threshold
-                # Get bounding box
-                x, y, w, h = cv2.boundingRect(contour)
+            if area < 5000:
+                continue
 
-                # Simple aspect ratio check for hand-like shape
-                aspect_ratio = w / h if h > 0 else 0
-                if 0.3 < aspect_ratio < 2.0:
-                    # Count fingers using convex hull defects
-                    hull = cv2.convexHull(contour, returnPoints=False)
-                    if len(hull) > 3:
-                        defects = cv2.convexityDefects(contour, hull)
-                        if defects is not None:
-                            finger_count = self._count_fingers(contour, defects)
-                            gesture = self._gesture_from_finger_count(finger_count)
+            x, y, w, h = cv2.boundingRect(contour)
+            aspect_ratio = w / h if h > 0 else 0
+            if not (0.3 < aspect_ratio < 2.0):
+                continue
 
-                            event = GestureEvent(
-                                gesture=gesture,
-                                confidence=0.5,  # Lower confidence for basic detection
-                                timestamp=datetime.now(),
-                                handedness="unknown",
-                            )
-                            events.append(event)
+            hull = cv2.convexHull(contour, returnPoints=False)
+            if len(hull) <= 3:
+                continue
 
-                            for callback in self._callbacks:
-                                try:
-                                    callback(event)
-                                except Exception as e:
-                                    logger.error(f"Gesture callback error: {e}")
+            defects = cv2.convexityDefects(contour, hull)
+            if defects is None:
+                continue
+
+            finger_count = self._count_fingers(contour, defects)
+            gesture = self._gesture_from_finger_count(finger_count)
+
+            event = GestureEvent(
+                gesture=gesture,
+                confidence=0.5,
+                timestamp=datetime.now(),
+                handedness="unknown",
+            )
+            events.append(event)
+
+            for cb in self._callbacks:
+                try:
+                    cb(event)
+                except Exception as exc:
+                    logger.error(f"Gesture callback error: {exc}")
 
         return events
 
     def _count_fingers(self, contour, defects) -> int:
-        """Count extended fingers from convexity defects."""
         finger_count = 0
-
         for i in range(defects.shape[0]):
             s, e, f, d = defects[i, 0]
             start = tuple(contour[s][0])
-            end = tuple(contour[e][0])
-            far = tuple(contour[f][0])
+            end   = tuple(contour[e][0])
+            far   = tuple(contour[f][0])
 
-            # Calculate distances
             a = np.sqrt((end[0] - start[0])**2 + (end[1] - start[1])**2)
             b = np.sqrt((far[0] - start[0])**2 + (far[1] - start[1])**2)
-            c = np.sqrt((end[0] - far[0])**2 + (end[1] - far[1])**2)
+            c = np.sqrt((end[0] - far[0])**2  + (end[1] - far[1])**2)
 
-            # Calculate angle using cosine rule
             if b * c > 0:
-                angle = np.arccos((b**2 + c**2 - a**2) / (2 * b * c))
-
-                # Finger detected if angle is less than 90 degrees
+                angle = np.arccos(
+                    np.clip((b**2 + c**2 - a**2) / (2 * b * c), -1.0, 1.0)
+                )
                 if angle <= np.pi / 2 and d > 20:
                     finger_count += 1
 
-        return min(finger_count + 1, 5)  # +1 for thumb, max 5
+        return min(finger_count + 1, 5)
 
     def _gesture_from_finger_count(self, finger_count: int) -> Gesture:
-        """Map finger count to gesture."""
-        if finger_count == 0:
-            return Gesture.CLOSED_FIST
-        elif finger_count == 1:
-            return Gesture.POINTING_UP
-        elif finger_count == 2:
-            return Gesture.PEACE
-        elif finger_count >= 4:
+        mapping = {
+            0: Gesture.CLOSED_FIST,
+            1: Gesture.POINTING_UP,
+            2: Gesture.PEACE,
+        }
+        if finger_count >= 4:
             return Gesture.OPEN_PALM
+        return mapping.get(finger_count, Gesture.NONE)
+
+    # ------------------------------------------------------------------
+    # Finger counting (used by quiz engine via main.py detection loop)
+    # ------------------------------------------------------------------
+
+    def _resolve_landmarks(self, hand_landmarks):
+        """Return a plain list of NormalizedLandmark from either a list or wrapper."""
+        if isinstance(hand_landmarks, list):
+            return hand_landmarks
+        return hand_landmarks.landmark
+
+    def get_finger_states(self, hand_landmarks) -> list:
+        """Return [thumb, index, middle, ring, pinky] extended booleans.
+
+        Uses MCP joints as the reference (more robust than PIP for larger angles).
+        Handles both upright and inverted hand orientations by checking whether
+        the wrist (0) is below the middle-finger MCP (9).
+
+        MediaPipe landmark indices used:
+          Wrist: 0
+          Thumb:  MCP=2, TIP=4
+          Index:  MCP=5, TIP=8
+          Middle: MCP=9, TIP=12
+          Ring:   MCP=13, TIP=16
+          Pinky:  MCP=17, TIP=20
+        """
+        lm = self._resolve_landmarks(hand_landmarks)
+
+        # y increases downward in image coords (0=top, 1=bottom)
+        # hand_up = wrist is below the middle MCP → fingers point upward
+        hand_up = lm[0].y > lm[9].y
+
+        states = []
+
+        # Thumb: compare tip to its own MCP
+        if hand_up:
+            states.append(lm[4].y < lm[2].y)
         else:
-            return Gesture.NONE
+            states.append(lm[4].y > lm[2].y)
 
-    def _classify_gesture(self, hand_landmarks) -> tuple[Gesture, float]:
-        """Classify hand gesture from landmarks."""
-        landmarks = hand_landmarks.landmark
-
-        # Extract key points
-        thumb_tip = landmarks[4]
-        index_tip = landmarks[8]
-        middle_tip = landmarks[12]
-        ring_tip = landmarks[16]
-        pinky_tip = landmarks[20]
-
-        thumb_ip = landmarks[3]
-        index_pip = landmarks[6]
-        middle_pip = landmarks[10]
-        ring_pip = landmarks[14]
-        pinky_pip = landmarks[18]
-
-        wrist = landmarks[0]
-
-        # Calculate finger states (extended or not)
-        def is_finger_extended(tip, pip, wrist) -> bool:
-            # Finger is extended if tip is further from wrist than pip
-            tip_dist = ((tip.x - wrist.x) ** 2 + (tip.y - wrist.y) ** 2) ** 0.5
-            pip_dist = ((pip.x - wrist.x) ** 2 + (pip.y - wrist.y) ** 2) ** 0.5
-            return tip_dist > pip_dist * 0.9
-
-        def is_thumb_extended() -> bool:
-            # Thumb extended if tip is far from palm
-            return abs(thumb_tip.x - wrist.x) > 0.1
-
-        index_extended = is_finger_extended(index_tip, index_pip, wrist)
-        middle_extended = is_finger_extended(middle_tip, middle_pip, wrist)
-        ring_extended = is_finger_extended(ring_tip, ring_pip, wrist)
-        pinky_extended = is_finger_extended(pinky_tip, pinky_pip, wrist)
-        thumb_extended = is_thumb_extended()
-
-        extended_count = sum([
-            index_extended, middle_extended, ring_extended, pinky_extended
-        ])
-
-        # Classify based on finger states
-        if extended_count >= 4 and thumb_extended:
-            return Gesture.OPEN_PALM, 0.9
-
-        if extended_count == 0 and not thumb_extended:
-            return Gesture.CLOSED_FIST, 0.9
-
-        if index_extended and not middle_extended and not ring_extended and not pinky_extended:
-            # Check if pointing up (index tip above pip)
-            if index_tip.y < index_pip.y:
-                return Gesture.POINTING_UP, 0.85
-
-        if index_extended and middle_extended and not ring_extended and not pinky_extended:
-            return Gesture.PEACE, 0.85
-
-        if thumb_extended and not index_extended and not middle_extended:
-            # Check thumb direction for thumbs up/down
-            if thumb_tip.y < thumb_ip.y:
-                return Gesture.THUMBS_UP, 0.8
+        # Index, Middle, Ring, Pinky: tip vs MCP
+        for tip_idx, mcp_idx in [(8, 5), (12, 9), (16, 13), (20, 17)]:
+            if hand_up:
+                states.append(lm[tip_idx].y < lm[mcp_idx].y)
             else:
-                return Gesture.THUMBS_DOWN, 0.8
+                states.append(lm[tip_idx].y > lm[mcp_idx].y)
 
-        # OK sign: thumb and index forming circle
-        thumb_index_dist = (
-            (thumb_tip.x - index_tip.x) ** 2 + (thumb_tip.y - index_tip.y) ** 2
-        ) ** 0.5
-        if thumb_index_dist < 0.05 and middle_extended:
-            return Gesture.OK, 0.8
+        return states  # [thumb, index, middle, ring, pinky]
 
-        return Gesture.NONE, 0.5
+    def count_extended_fingers(self, hand_landmarks) -> int:
+        """Count extended non-thumb fingers (0–4).
+
+        Uses MCP joints as reference and auto-detects hand orientation so it
+        works whether the hand is held upright or inverted.
+        """
+        states = self.get_finger_states(hand_landmarks)
+        # Skip thumb (index 0), count the 4 fingers
+        return sum(states[1:])
+
+    # ------------------------------------------------------------------
+    # Annotation
+    # ------------------------------------------------------------------
 
     def draw_landmarks(
         self,
         frame: np.ndarray,
         events: list[GestureEvent],
     ) -> np.ndarray:
-        """Draw hand landmarks and gesture labels on frame.
-
-        Args:
-            frame: Original frame
-            events: Detected gesture events
-
-        Returns:
-            Annotated frame
-        """
+        """Draw gesture labels (and optionally landmarks) on frame."""
         if not events:
             return frame
 
         annotated = frame.copy()
+        h, w = annotated.shape[:2]
 
-        for event in events:
-            if event.hand_landmarks and self._use_mediapipe and mp is not None:
-                # MediaPipe drawing
-                mp_draw = mp.solutions.drawing_utils
-                mp_hands = mp.solutions.hands
+        for idx, event in enumerate(events):
+            label = f"{event.gesture.value} ({event.confidence:.2f}) [{event.handedness}]"
 
-                # Create landmark proto for drawing
-                hand_landmarks = mp.framework.formats.landmark_pb2.NormalizedLandmarkList()
+            if event.hand_landmarks and self._use_mediapipe:
+                # Draw landmark dots
                 for lm in event.hand_landmarks:
-                    landmark = hand_landmarks.landmark.add()
-                    landmark.x = lm.x
-                    landmark.y = lm.y
-                    landmark.z = lm.z
+                    cx, cy = int(lm.x * w), int(lm.y * h)
+                    cv2.circle(annotated, (cx, cy), 4, (0, 255, 0), -1)
 
-                mp_draw.draw_landmarks(
-                    annotated,
-                    hand_landmarks,
-                    mp_hands.HAND_CONNECTIONS,
-                )
-
-                # Draw gesture label
-                h, w, _ = annotated.shape
-                x = int(event.hand_landmarks[0].x * w)
-                y = int(event.hand_landmarks[0].y * h) - 20
-
-                label = f"{event.gesture.value} ({event.confidence:.2f})"
-                cv2.putText(
-                    annotated, label, (x, y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2
-                )
+                # Wrist position for label anchor
+                wrist = event.hand_landmarks[0]
+                lx = int(wrist.x * w)
+                ly = max(int(wrist.y * h) - 20, 20)
             else:
-                # Basic text annotation for non-MediaPipe detection
-                label = f"{event.gesture.value} ({event.confidence:.2f})"
-                cv2.putText(
-                    annotated, label, (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2
-                )
+                lx, ly = 10, 30 + idx * 30
+
+            cv2.putText(
+                annotated, label, (lx, ly),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0), 2,
+            )
 
         return annotated
 
+    # ------------------------------------------------------------------
+    # Callback management
+    # ------------------------------------------------------------------
+
     def add_callback(self, callback: Callable[[GestureEvent], None]) -> None:
-        """Add callback for gesture events."""
         self._callbacks.append(callback)
 
     def remove_callback(self, callback: Callable[[GestureEvent], None]) -> None:
-        """Remove callback."""
         if callback in self._callbacks:
             self._callbacks.remove(callback)
 
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
     def close(self) -> None:
         """Release resources."""
-        if self._hands:
-            self._hands.close()
-            self._hands = None
+        if self._recognizer is not None:
+            try:
+                self._recognizer.close()
+            except Exception:
+                pass
+            self._recognizer = None
         self._initialized = False
 
     @property
     def is_initialized(self) -> bool:
-        """Check if detector is initialized."""
         return self._initialized

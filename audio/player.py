@@ -2,6 +2,7 @@
 import io
 import logging
 import queue
+import struct
 import subprocess
 import threading
 import wave
@@ -113,11 +114,9 @@ class AudioPlayer:
             if suffix == '.mp3':
                 self._play_mp3_sync(filepath)
             elif suffix == '.wav':
-                # Try WAV first, if it fails (bad format), use ffmpeg
-                try:
+                if self._wav_is_pcm(filepath):
                     self._play_wav_sync(filepath)
-                except Exception as wav_err:
-                    logger.warning(f"WAV playback failed, trying ffmpeg: {wav_err}")
+                else:
                     self._play_with_ffmpeg_sync(filepath)
             elif suffix in ['.webm', '.ogg', '.m4a', '.aac', '.flac']:
                 # For WebM and other formats, always use ffmpeg
@@ -130,6 +129,20 @@ class AudioPlayer:
         except Exception as e:
             logger.error(f"Playback error for {filepath}: {e}")
             self._playing = False
+
+    def _wav_is_pcm(self, filepath: str) -> bool:
+        """Return True only if the WAV file uses standard int16 PCM (format code 1).
+
+        iOS flutter_tts generates format 3 (IEEE float32) which Python's wave
+        module cannot read and ALSA cannot play natively — route those to ffmpeg.
+        """
+        try:
+            with open(filepath, 'rb') as f:
+                f.seek(20)
+                fmt_code = struct.unpack('<H', f.read(2))[0]
+            return fmt_code == 1
+        except Exception:
+            return False
 
     def _play_wav_sync(self, filepath: str) -> None:
         """Play WAV file synchronously."""

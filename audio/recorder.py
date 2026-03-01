@@ -63,8 +63,10 @@ class NoiseReducer:
         # Spectral subtraction parameters
         self.noise_floor = None
         self.noise_floor_alpha = 0.98  # Smoothing factor for noise floor update
-        self.subtraction_factor = 2.0  # How aggressively to subtract noise
-        self.spectral_floor = 0.01     # Minimum spectral value to prevent musical noise
+        self.subtraction_factor = 1.2  # Fix 3: reduced from 2.0 — safe range is 1.0-1.5;
+                                       # 2.0 over-subtracts and creates musical noise artifacts
+        self.spectral_floor = 0.05     # Fix 3: raised from 0.01 — preserves low-energy
+                                       # consonants (s, f, t, p) that Whisper relies on
 
         # Adaptive filter for dual-mic (LMS algorithm)
         self.filter_order = 128
@@ -119,6 +121,11 @@ class NoiseReducer:
 
         # Spectral subtraction
         if self.noise_floor is not None:
+            # Reset if chunk size changed (ALSA can return variable-length reads)
+            if self.noise_floor.shape != magnitude.shape:
+                self.noise_floor = None
+                self.noise_estimate_frames = 0
+                return audio
             # Subtract noise floor
             cleaned_magnitude = magnitude - self.subtraction_factor * self.noise_floor
             # Apply spectral floor to prevent musical noise
@@ -213,7 +220,9 @@ class AudioRecorder:
         chunk_size: int = AUDIO_CHUNK_SIZE,
         noise_reduction: bool = AUDIO_NOISE_REDUCTION,
         dual_mic: bool = AUDIO_DUAL_MIC_ENABLED,
-        echo_cancellation: bool = True,
+        echo_cancellation: bool = False,  # Fix 4: disabled by default — LMS filter
+                                           # diverges when no playback reference is active,
+                                           # gradually learning to cancel the mic signal
     ):
         self.device = device
         self.device_2 = device_2

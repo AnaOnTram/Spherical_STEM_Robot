@@ -78,7 +78,15 @@ class WebSocketManager:
             websocket: WebSocket connection
             subscribe_to: Event types to subscribe to (None = all)
         """
-        await websocket.accept()
+        # Pass allowed_origins=["*"] so Starlette's built-in Origin check
+        # (introduced in Starlette 0.21) does not reject cross-origin
+        # connections.  The debug UI is served from the same host but a
+        # different port, which Starlette treats as a different origin.
+        try:
+            await websocket.accept(headers=None)
+        except TypeError:
+            # Fallback for older/newer FastAPI versions
+            await websocket.accept()
         self._connections.add(websocket)
 
         # Set up subscriptions
@@ -189,14 +197,26 @@ class WebSocketManager:
         gesture: str,
         confidence: float,
         handedness: str = "unknown",
+        finger_count: int = -1,
     ) -> None:
-        """Broadcast gesture detection event."""
+        """Broadcast gesture detection event.
+
+        Args:
+            gesture:      Named gesture string (e.g. ``"pointing_up"``).
+            confidence:   Detection confidence 0–1.
+            handedness:   ``"Left"`` or ``"Right"`` (MediaPipe label).
+            finger_count: Number of extended fingers counted by
+                          ``count_extended_fingers()`` (0–4).
+                          -1 means the detector did not compute a count
+                          (e.g. TFLite / basic fallback path).
+        """
         await self.broadcast(WebSocketEvent(
             EventType.GESTURE_DETECTED,
             {
                 "gesture": gesture,
                 "confidence": confidence,
                 "handedness": handedness,
+                "finger_count": finger_count,
             },
         ))
 

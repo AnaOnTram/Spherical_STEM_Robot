@@ -1,0 +1,1770 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spherical Robot - LLM Debug Console</title>
+    
+    <!-- Inter font for Claude-like aesthetic -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            /* Claude-inspired color palette - soft purple/indigo theme */
+            --primary-50: #faf5ff;
+            --primary-100: #f3e8ff;
+            --primary-200: #e9d5ff;
+            --primary-300: #d8b4fe;
+            --primary-400: #c084fc;
+            --primary-500: #a855f7;
+            --primary-600: #9333ea;
+            --primary-700: #7c3aed;
+            --primary-800: #6b21a8;
+            --primary-900: #581c87;
+            
+            /* Neutral grays - warm undertones */
+            --gray-50: #fafafa;
+            --gray-100: #f5f5f4;
+            --gray-200: #e7e5e4;
+            --gray-300: #d6d3d1;
+            --gray-400: #a8a29e;
+            --gray-500: #78716c;
+            --gray-600: #57534e;
+            --gray-700: #44403c;
+            --gray-800: #292524;
+            --gray-900: #1c1917;
+            
+            /* Semantic colors */
+            --bg-primary: #ffffff;
+            --bg-secondary: var(--gray-50);
+            --bg-tertiary: var(--gray-100);
+            
+            --text-primary: var(--gray-900);
+            --text-secondary: var(--gray-600);
+            --text-tertiary: var(--gray-500);
+            
+            --accent-primary: var(--primary-600);
+            --accent-secondary: var(--primary-500);
+            --accent-light: var(--primary-100);
+            --accent-lighter: var(--primary-50);
+            
+            /* Status colors */
+            --success: #10b981;
+            --success-light: #d1fae5;
+            --warning: #f59e0b;
+            --warning-light: #fef3c7;
+            --error: #ef4444;
+            --error-light: #fee2e2;
+            --info: #3b82f6;
+            --info-light: #dbeafe;
+            
+            /* Spacing */
+            --space-xs: 0.25rem;
+            --space-sm: 0.5rem;
+            --space-md: 1rem;
+            --space-lg: 1.5rem;
+            --space-xl: 2rem;
+            --space-2xl: 3rem;
+            
+            /* Border radius - soft, modern */
+            --radius-sm: 6px;
+            --radius-md: 10px;
+            --radius-lg: 14px;
+            --radius-xl: 20px;
+            --radius-full: 9999px;
+            
+            /* Shadows - subtle and elegant */
+            --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.04);
+            --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.06), 0 2px 4px -2px rgb(0 0 0 / 0.04);
+            --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.08), 0 4px 6px -4px rgb(0 0 0 / 0.04);
+            
+            /* Transitions */
+            --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+            --transition-base: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background-color: var(--bg-secondary);
+            color: var(--text-primary);
+            line-height: 1.6;
+            font-size: 15px;
+            min-height: 100vh;
+        }
+        
+        /* Header */
+        .header {
+            background: linear-gradient(135deg, var(--primary-700) 0%, var(--primary-600) 100%);
+            color: white;
+            padding: var(--space-lg) var(--space-xl);
+            box-shadow: var(--shadow-lg);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        
+        .header-content {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: var(--space-md);
+        }
+        
+        .header-icon {
+            width: 44px;
+            height: 44px;
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: var(--radius-lg);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            backdrop-filter: blur(10px);
+        }
+        
+        .header-icon svg {
+            width: 24px;
+            height: 24px;
+            stroke: white;
+            stroke-width: 2;
+            fill: none;
+        }
+        
+        .header h1 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            letter-spacing: -0.02em;
+        }
+        
+        .header-subtitle {
+            font-size: 0.8125rem;
+            opacity: 0.8;
+            font-weight: 400;
+        }
+        
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: var(--space-md);
+        }
+        
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: var(--space-sm);
+            padding: var(--space-sm) var(--space-md);
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: var(--radius-full);
+            font-size: 0.8125rem;
+            font-weight: 500;
+            backdrop-filter: blur(10px);
+            cursor: pointer;
+            transition: all var(--transition-fast);
+        }
+        
+        .connection-status:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+        
+        .connection-status.connected {
+            background: rgba(16, 185, 129, 0.3);
+        }
+        
+        .connection-status.disconnected {
+            background: rgba(239, 68, 68, 0.3);
+        }
+        
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: var(--radius-full);
+            background: var(--gray-400);
+            animation: pulse 2s ease-in-out infinite;
+        }
+        
+        .status-dot.connected {
+            background: var(--success);
+            animation: none;
+        }
+        
+        .status-dot.disconnected {
+            background: var(--error);
+            animation: none;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        /* Main Layout */
+        .main-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: var(--space-xl);
+            display: grid;
+            grid-template-columns: 280px 1fr 320px;
+            gap: var(--space-xl);
+            min-height: calc(100vh - 88px);
+        }
+        
+        /* Cards */
+        .card {
+            background: var(--bg-primary);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-sm);
+            border: 1px solid var(--gray-200);
+            overflow: hidden;
+            transition: all var(--transition-fast);
+        }
+        
+        .card:hover {
+            box-shadow: var(--shadow-md);
+        }
+        
+        .card-header {
+            padding: var(--space-md) var(--space-lg);
+            border-bottom: 1px solid var(--gray-200);
+            display: flex;
+            align-items: center;
+            gap: var(--space-sm);
+        }
+        
+        .card-title {
+            font-size: 0.9375rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        
+        .card-content {
+            padding: var(--space-lg);
+        }
+        
+        /* Service Status Panel (Left Sidebar) */
+        .services-panel {
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-lg);
+        }
+        
+        .service-item {
+            display: flex;
+            align-items: center;
+            gap: var(--space-md);
+            padding: var(--space-md);
+            background: var(--bg-secondary);
+            border-radius: var(--radius-md);
+            border: 1px solid var(--gray-200);
+            transition: all var(--transition-fast);
+        }
+        
+        .service-item:hover {
+            border-color: var(--primary-300);
+            background: var(--accent-lighter);
+        }
+        
+        .service-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: var(--radius-md);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: white;
+            border: 1px solid var(--gray-200);
+        }
+        
+        .service-icon svg {
+            width: 20px;
+            height: 20px;
+            stroke: var(--gray-600);
+            stroke-width: 1.5;
+            fill: none;
+        }
+        
+        .service-info {
+            flex: 1;
+        }
+        
+        .service-name {
+            font-size: 0.8125rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        
+        .service-status {
+            font-size: 0.75rem;
+            color: var(--text-tertiary);
+            display: flex;
+            align-items: center;
+            gap: var(--space-xs);
+        }
+        
+        .service-indicator {
+            width: 6px;
+            height: 6px;
+            border-radius: var(--radius-full);
+        }
+        
+        .service-indicator.online {
+            background: var(--success);
+        }
+        
+        .service-indicator.offline {
+            background: var(--error);
+        }
+        
+        .service-indicator.starting {
+            background: var(--warning);
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+        
+        /* Chat Interface (Center) */
+        .chat-container {
+            display: flex;
+            flex-direction: column;
+            height: calc(100vh - 140px);
+            position: relative;
+        }
+        
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: var(--space-lg);
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-lg);
+        }
+        
+        .chat-message {
+            display: flex;
+            gap: var(--space-md);
+            max-width: 90%;
+        }
+        
+        .chat-message.user {
+            align-self: flex-end;
+            flex-direction: row-reverse;
+        }
+        
+        .chat-message.assistant {
+            align-self: flex-start;
+        }
+        
+        .chat-message.system {
+            align-self: center;
+            background: var(--bg-tertiary);
+            padding: var(--space-sm) var(--space-md);
+            border-radius: var(--radius-full);
+            font-size: 0.75rem;
+            color: var(--text-tertiary);
+        }
+        
+        .message-avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: var(--radius-lg);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            font-size: 0.875rem;
+            font-weight: 600;
+        }
+        
+        .message-avatar.user {
+            background: var(--accent-primary);
+            color: white;
+        }
+        
+        .message-avatar.assistant {
+            background: var(--accent-light);
+            color: var(--accent-primary);
+        }
+        
+        .message-content {
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-xs);
+        }
+        
+        .message-bubble {
+            padding: var(--space-md) var(--space-lg);
+            border-radius: var(--radius-xl);
+            max-width: 100%;
+            word-wrap: break-word;
+        }
+        
+        .message-bubble.user {
+            background: var(--accent-primary);
+            color: white;
+            border-bottom-right-radius: var(--radius-sm);
+        }
+        
+        .message-bubble.assistant {
+            background: white;
+            border: 1px solid var(--gray-200);
+            border-bottom-left-radius: var(--radius-sm);
+        }
+        
+        .message-meta {
+            font-size: 0.6875rem;
+            color: var(--text-tertiary);
+            display: flex;
+            align-items: center;
+            gap: var(--space-sm);
+        }
+        
+        .message-actions {
+            display: flex;
+            gap: var(--space-xs);
+        }
+        
+        .message-action-btn {
+            padding: var(--space-xs) var(--space-sm);
+            background: var(--bg-tertiary);
+            border: none;
+            border-radius: var(--radius-sm);
+            font-size: 0.6875rem;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all var(--transition-fast);
+        }
+        
+        .message-action-btn:hover {
+            background: var(--accent-light);
+            color: var(--accent-primary);
+        }
+        
+        /* Input Area */
+        .chat-input-container {
+            padding: var(--space-md) var(--space-lg);
+            background: white;
+            border-top: 1px solid var(--gray-200);
+        }
+        
+        .input-toolbar {
+            display: flex;
+            align-items: center;
+            gap: var(--space-sm);
+            margin-bottom: var(--space-sm);
+            flex-wrap: wrap;
+        }
+        
+        .toolbar-btn {
+            display: flex;
+            align-items: center;
+            gap: var(--space-xs);
+            padding: var(--space-xs) var(--space-sm);
+            background: var(--bg-tertiary);
+            border: 1px solid var(--gray-200);
+            border-radius: var(--radius-md);
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all var(--transition-fast);
+        }
+        
+        .toolbar-btn:hover {
+            background: var(--accent-lighter);
+            border-color: var(--primary-300);
+            color: var(--accent-primary);
+        }
+        
+        .toolbar-btn.active {
+            background: var(--accent-light);
+            border-color: var(--primary-400);
+            color: var(--accent-primary);
+        }
+        
+        .toolbar-btn svg {
+            width: 14px;
+            height: 14px;
+            stroke: currentColor;
+            stroke-width: 2;
+            fill: none;
+        }
+        
+        .input-wrapper {
+            display: flex;
+            gap: var(--space-sm);
+            align-items: flex-end;
+            background: var(--bg-secondary);
+            border: 1px solid var(--gray-200);
+            border-radius: var(--radius-xl);
+            padding: var(--space-sm);
+            transition: all var(--transition-fast);
+        }
+        
+        .input-wrapper:focus-within {
+            border-color: var(--primary-400);
+            box-shadow: 0 0 0 3px var(--accent-lighter);
+        }
+        
+        .chat-input {
+            flex: 1;
+            border: none;
+            background: transparent;
+            padding: var(--space-sm) var(--space-md);
+            font-family: inherit;
+            font-size: 0.9375rem;
+            color: var(--text-primary);
+            resize: none;
+            outline: none;
+            min-height: 24px;
+            max-height: 120px;
+        }
+        
+        .chat-input::placeholder {
+            color: var(--text-tertiary);
+        }
+        
+        .input-actions {
+            display: flex;
+            gap: var(--space-xs);
+        }
+        
+        .icon-btn {
+            width: 36px;
+            height: 36px;
+            border: none;
+            background: transparent;
+            border-radius: var(--radius-md);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            color: var(--text-tertiary);
+            transition: all var(--transition-fast);
+        }
+        
+        .icon-btn:hover {
+            background: var(--gray-200);
+            color: var(--text-secondary);
+        }
+        
+        .icon-btn.primary {
+            background: var(--accent-primary);
+            color: white;
+        }
+        
+        .icon-btn.primary:hover {
+            background: var(--primary-700);
+        }
+        
+        .icon-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .icon-btn svg {
+            width: 18px;
+            height: 18px;
+            stroke: currentColor;
+            stroke-width: 2;
+            fill: none;
+        }
+        
+        .icon-btn.recording {
+            background: var(--error);
+            color: white;
+            animation: recording-pulse 1.5s ease-in-out infinite;
+        }
+        
+        @keyframes recording-pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+        
+        /* Right Panel - Events & Logs */
+        .right-panel {
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-lg);
+        }
+        
+        .panel-tabs {
+            display: flex;
+            gap: var(--space-xs);
+            padding: var(--space-xs);
+            background: var(--bg-secondary);
+            border-radius: var(--radius-md);
+        }
+        
+        .panel-tab {
+            flex: 1;
+            padding: var(--space-sm) var(--space-md);
+            border: none;
+            background: transparent;
+            border-radius: var(--radius-sm);
+            font-size: 0.8125rem;
+            font-weight: 500;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all var(--transition-fast);
+        }
+        
+        .panel-tab:hover {
+            color: var(--text-primary);
+        }
+        
+        .panel-tab.active {
+            background: white;
+            color: var(--accent-primary);
+            box-shadow: var(--shadow-sm);
+        }
+        
+        .panel-content {
+            flex: 1;
+            overflow-y: auto;
+            max-height: 400px;
+        }
+        
+        /* Event Log */
+        .event-item {
+            padding: var(--space-md);
+            border-bottom: 1px solid var(--gray-200);
+            font-size: 0.8125rem;
+            transition: all var(--transition-fast);
+        }
+        
+        .event-item:hover {
+            background: var(--bg-secondary);
+        }
+        
+        .event-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: var(--space-xs);
+        }
+        
+        .event-type {
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: var(--space-xs);
+        }
+        
+        .event-type.alarm {
+            color: var(--error);
+        }
+        
+        .event-type.gesture {
+            color: var(--info);
+        }
+        
+        .event-type.person {
+            color: var(--success);
+        }
+        
+        .event-type.system {
+            color: var(--text-secondary);
+        }
+        
+        .event-time {
+            font-size: 0.6875rem;
+            color: var(--text-tertiary);
+        }
+        
+        .event-data {
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+            font-family: 'Monaco', 'Menlo', monospace;
+        }
+        
+        /* Log Panel */
+        .log-entry {
+            padding: var(--space-sm) var(--space-md);
+            font-size: 0.75rem;
+            font-family: 'Monaco', 'Menlo', monospace;
+            border-bottom: 1px solid var(--gray-100);
+            display: flex;
+            gap: var(--space-sm);
+        }
+        
+        .log-time {
+            color: var(--text-tertiary);
+            flex-shrink: 0;
+        }
+        
+        .log-level {
+            width: 40px;
+            flex-shrink: 0;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        
+        .log-level.info {
+            color: var(--info);
+        }
+        
+        .log-level.warn {
+            color: var(--warning);
+        }
+        
+        .log-level.error {
+            color: var(--error);
+        }
+        
+        .log-level.debug {
+            color: var(--text-tertiary);
+        }
+        
+        .log-message {
+            color: var(--text-secondary);
+            word-break: break-word;
+        }
+        
+        /* Session Info */
+        .session-info {
+            padding: var(--space-md);
+            background: var(--accent-lighter);
+            border: 1px solid var(--primary-200);
+            border-radius: var(--radius-md);
+            margin-bottom: var(--space-lg);
+        }
+        
+        .session-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: var(--space-xs);
+            font-size: 0.8125rem;
+        }
+        
+        .session-row:last-child {
+            margin-bottom: 0;
+        }
+        
+        .session-label {
+            color: var(--text-tertiary);
+        }
+        
+        .session-value {
+            font-weight: 500;
+            color: var(--text-primary);
+            font-family: monospace;
+        }
+        
+        /* Empty States */
+        .empty-state {
+            text-align: center;
+            padding: var(--space-2xl);
+            color: var(--text-tertiary);
+        }
+        
+        .empty-state-icon {
+            width: 48px;
+            height: 48px;
+            margin: 0 auto var(--space-md);
+            stroke: var(--gray-300);
+            stroke-width: 1.5;
+            fill: none;
+        }
+        
+        .empty-state-text {
+            font-size: 0.875rem;
+        }
+        
+        /* Loading States */
+        .loading-dots {
+            display: inline-flex;
+            gap: 4px;
+        }
+        
+        .loading-dots span {
+            width: 6px;
+            height: 6px;
+            background: var(--accent-primary);
+            border-radius: var(--radius-full);
+            animation: bounce 1.4s ease-in-out infinite both;
+        }
+        
+        .loading-dots span:nth-child(1) { animation-delay: -0.32s; }
+        .loading-dots span:nth-child(2) { animation-delay: -0.16s; }
+        
+        @keyframes bounce {
+            0%, 80%, 100% { transform: scale(0); }
+            40% { transform: scale(1); }
+        }
+        
+        /* Audio Waveform */
+        .audio-waveform {
+            display: flex;
+            align-items: center;
+            gap: 3px;
+            height: 40px;
+            padding: var(--space-sm);
+            background: var(--bg-tertiary);
+            border-radius: var(--radius-md);
+        }
+        
+        .audio-bar {
+            width: 3px;
+            background: var(--accent-primary);
+            border-radius: var(--radius-full);
+            transition: height 0.1s ease;
+        }
+        
+        /* Modal */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            backdrop-filter: blur(4px);
+        }
+        
+        .modal-overlay.show {
+            display: flex;
+        }
+        
+        .modal {
+            background: white;
+            border-radius: var(--radius-xl);
+            width: 90%;
+            max-width: 480px;
+            box-shadow: var(--shadow-lg);
+            overflow: hidden;
+        }
+        
+        .modal-header {
+            padding: var(--space-lg);
+            border-bottom: 1px solid var(--gray-200);
+        }
+        
+        .modal-title {
+            font-size: 1.125rem;
+            font-weight: 600;
+        }
+        
+        .modal-body {
+            padding: var(--space-lg);
+        }
+        
+        .modal-footer {
+            padding: var(--space-md) var(--space-lg);
+            border-top: 1px solid var(--gray-200);
+            display: flex;
+            justify-content: flex-end;
+            gap: var(--space-sm);
+        }
+        
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: var(--space-sm);
+            padding: var(--space-sm) var(--space-md);
+            border: none;
+            border-radius: var(--radius-md);
+            font-family: inherit;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all var(--transition-fast);
+        }
+        
+        .btn-primary {
+            background: var(--accent-primary);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: var(--primary-700);
+        }
+        
+        .btn-secondary {
+            background: var(--bg-tertiary);
+            color: var(--text-secondary);
+        }
+        
+        .btn-secondary:hover {
+            background: var(--gray-200);
+        }
+        
+        .btn-danger {
+            background: var(--error);
+            color: white;
+        }
+        
+        .btn-danger:hover {
+            background: #dc2626;
+        }
+        
+        /* Form Elements */
+        .form-group {
+            margin-bottom: var(--space-md);
+        }
+        
+        .form-label {
+            display: block;
+            font-size: 0.8125rem;
+            font-weight: 500;
+            color: var(--text-secondary);
+            margin-bottom: var(--space-xs);
+        }
+        
+        .form-input {
+            width: 100%;
+            padding: var(--space-sm) var(--space-md);
+            border: 1px solid var(--gray-300);
+            border-radius: var(--radius-md);
+            font-family: inherit;
+            font-size: 0.9375rem;
+            transition: all var(--transition-fast);
+        }
+        
+        .form-input:focus {
+            outline: none;
+            border-color: var(--primary-400);
+            box-shadow: 0 0 0 3px var(--accent-lighter);
+        }
+        
+        /* Responsive */
+        @media (max-width: 1200px) {
+            .main-container {
+                grid-template-columns: 1fr;
+                gap: var(--space-lg);
+            }
+            
+            .services-panel,
+            .right-panel {
+                display: none;
+            }
+        }
+        
+        /* Scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: var(--bg-secondary);
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: var(--gray-300);
+            border-radius: var(--radius-full);
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--gray-400);
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-content">
+            <div class="header-left">
+                <div class="header-icon">
+                    <svg viewBox="0 0 24 24">
+                        <circle cx="12" cy="12" r="10"/>
+                        <path d="M12 6v6l4 2"/>
+                    </svg>
+                </div>
+                <div>
+                    <h1>LLM Debug Console</h1>
+                    <div class="header-subtitle">Spherical Robot - Voice AI Diagnostics</div>
+                </div>
+            </div>
+            <div class="header-right">
+                <div class="connection-status disconnected" id="connectionStatus" onclick="showConnectionModal()">
+                    <span class="status-dot" id="statusDot"></span>
+                    <span id="connectionText">Disconnected</span>
+                </div>
+            </div>
+        </div>
+    </header>
+    
+    <!-- Main Container -->
+    <div class="main-container">
+        <!-- Left Panel: Service Status -->
+        <aside class="services-panel">
+            <div class="card">
+                <div class="card-header">
+                    <svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none">
+                        <rect x="2" y="3" width="20" height="14" rx="2"/>
+                        <line x1="8" y1="21" x2="16" y2="21"/>
+                        <line x1="12" y1="17" x2="12" y2="21"/>
+                    </svg>
+                    <span class="card-title">Service Status</span>
+                </div>
+                <div class="card-content">
+                    <div class="service-item" id="service-llm">
+                        <div class="service-icon">
+                            <svg viewBox="0 0 24 24">
+                                <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                                <path d="M2 17l10 5 10-5"/>
+                                <path d="M2 12l10 5 10-5"/>
+                            </svg>
+                        </div>
+                        <div class="service-info">
+                            <div class="service-name">LLM Server</div>
+                            <div class="service-status">
+                                <span class="service-indicator offline" id="llm-indicator"></span>
+                                <span id="llm-status">Offline</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="service-item" id="service-asr">
+                        <div class="service-icon">
+                            <svg viewBox="0 0 24 24">
+                                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                                <line x1="12" y1="19" x2="12" y2="23"/>
+                                <line x1="8" y1="23" x2="16" y2="23"/>
+                            </svg>
+                        </div>
+                        <div class="service-info">
+                            <div class="service-name">ASR (Whisper)</div>
+                            <div class="service-status">
+                                <span class="service-indicator offline" id="asr-indicator"></span>
+                                <span id="asr-status">Offline</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="service-item" id="service-tts">
+                        <div class="service-icon">
+                            <svg viewBox="0 0 24 24">
+                                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                                <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                            </svg>
+                        </div>
+                        <div class="service-info">
+                            <div class="service-name">TTS (Piper)</div>
+                            <div class="service-status">
+                                <span class="service-indicator offline" id="tts-indicator"></span>
+                                <span id="tts-status">Offline</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="service-item" id="service-audio">
+                        <div class="service-icon">
+                            <svg viewBox="0 0 24 24">
+                                <path d="M3 18v-6a9 9 0 0 1 18 0v6"/>
+                                <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/>
+                            </svg>
+                        </div>
+                        <div class="service-info">
+                            <div class="service-name">Audio System</div>
+                            <div class="service-status">
+                                <span class="service-indicator offline" id="audio-indicator"></span>
+                                <span id="audio-status">Offline</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Session Info -->
+            <div class="card">
+                <div class="card-header">
+                    <svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none">
+                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                        <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                    </svg>
+                    <span class="card-title">Active Session</span>
+                </div>
+                <div class="card-content">
+                    <div class="session-info">
+                        <div class="session-row">
+                            <span class="session-label">Session ID</span>
+                            <span class="session-value" id="sessionId">--</span>
+                        </div>
+                        <div class="session-row">
+                            <span class="session-label">Provider</span>
+                            <span class="session-value" id="provider">--</span>
+                        </div>
+                        <div class="session-row">
+                            <span class="session-label">Messages</span>
+                            <span class="session-value" id="msgCount">0</span>
+                        </div>
+                        <div class="session-row">
+                            <span class="session-label">Last Active</span>
+                            <span class="session-value" id="lastActive">--</span>
+                        </div>
+                    </div>
+                    <button class="btn btn-secondary" style="width: 100%;" onclick="resetSession()">
+                        <svg width="14" height="14" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none">
+                            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                            <path d="M3 3v5h5"/>
+                        </svg>
+                        Reset Session
+                    </button>
+                </div>
+            </div>
+        </aside>
+        
+        <!-- Center: Chat Interface -->
+        <main class="chat-container card">
+            <div class="chat-messages" id="chatMessages">
+                <div class="empty-state">
+                    <svg class="empty-state-icon" viewBox="0 0 24 24">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                    </svg>
+                    <div class="empty-state-text">Start a conversation with the robot</div>
+                    <div style="margin-top: var(--space-sm); font-size: 0.8125rem; color: var(--text-tertiary);">
+                        Record audio or type a message below
+                    </div>
+                </div>
+            </div>
+            
+            <div class="chat-input-container">
+                <div class="input-toolbar">
+                    <button class="toolbar-btn" id="btnLocal" onclick="setProvider('local')">
+                        <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                        Local LLM
+                    </button>
+                    <button class="toolbar-btn" id="btnCloud" onclick="setProvider('cloud')">
+                        <svg viewBox="0 0 24 24"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>
+                        Cloud
+                    </button>
+                    <button class="toolbar-btn" onclick="clearChat()">
+                        <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                        Clear
+                    </button>
+                    <div style="margin-left: auto; font-size: 0.75rem; color: var(--text-tertiary);">
+                        <label style="display: flex; align-items: center; gap: var(--space-xs); cursor: pointer;">
+                            <input type="checkbox" id="autoPlayAudio" checked style="accent-color: var(--accent-primary);">
+                            Auto-play audio
+                        </label>
+                    </div>
+                </div>
+                
+                <div class="input-wrapper">
+                    <button class="icon-btn" id="recordBtn" onclick="toggleRecording()">
+                        <svg viewBox="0 0 24 24">
+                            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                            <line x1="12" y1="19" x2="12" y2="23"/>
+                            <line x1="8" y1="23" x2="16" y2="23"/>
+                        </svg>
+                    </button>
+                    <textarea 
+                        class="chat-input" 
+                        id="chatInput" 
+                        placeholder="Type your message or click the mic to record..."
+                        rows="1"
+                        onkeydown="handleInputKeydown(event)"
+                        oninput="autoResizeTextarea(this)"
+                    ></textarea>
+                    <div class="input-actions">
+                        <button class="icon-btn" onclick="document.getElementById('audioUpload').click()" title="Upload audio">
+                            <svg viewBox="0 0 24 24">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                <polyline points="17 8 12 3 7 8"/>
+                                <line x1="12" y1="3" x2="12" y2="15"/>
+                            </svg>
+                        </button>
+                        <button class="icon-btn primary" onclick="sendMessage()" id="sendBtn">
+                            <svg viewBox="0 0 24 24">
+                                <line x1="22" y1="2" x2="11" y2="13"/>
+                                <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <input type="file" id="audioUpload" accept="audio/*" style="display: none;" onchange="handleAudioUpload(event)">
+            </div>
+        </main>
+        
+        <!-- Right Panel: Events & Logs -->
+        <aside class="right-panel">
+            <div class="card" style="flex: 1;">
+                <div class="card-header">
+                    <svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                        <polyline points="14 2 14 8 20 8"/>
+                        <line x1="16" y1="13" x2="8" y2="13"/>
+                        <line x1="16" y1="17" x2="8" y2="17"/>
+                        <polyline points="10 9 9 9 8 9"/>
+                    </svg>
+                    <span class="card-title">Events & Logs</span>
+                </div>
+                <div class="card-content" style="padding: 0;">
+                    <div class="panel-tabs">
+                        <button class="panel-tab active" onclick="switchTab('events')">Events</button>
+                        <button class="panel-tab" onclick="switchTab('logs')">Logs</button>
+                    </div>
+                    
+                    <div class="panel-content" id="eventsPanel">
+                        <div class="empty-state" style="padding: var(--space-xl);">
+                            <svg class="empty-state-icon" viewBox="0 0 24 24" style="width: 36px; height: 36px;">
+                                <circle cx="12" cy="12" r="10"/>
+                                <line x1="12" y1="8" x2="12" y2="12"/>
+                                <line x1="12" y1="16" x2="12.01" y2="16"/>
+                            </svg>
+                            <div class="empty-state-text" style="font-size: 0.8125rem;">No events yet</div>
+                        </div>
+                    </div>
+                    
+                    <div class="panel-content" id="logsPanel" style="display: none;">
+                        <div class="log-entry">
+                            <span class="log-time">--:--:--</span>
+                            <span class="log-level info">INFO</span>
+                            <span class="log-message">System ready</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+    </div>
+    
+    <!-- Connection Modal -->
+    <div class="modal-overlay" id="connectionModal">
+        <div class="modal">
+            <div class="modal-header">
+                <div class="modal-title">Connect to Robot</div>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">Robot IP Address</label>
+                    <input type="text" class="form-input" id="robotIp" placeholder="192.168.1.100:8000">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="hideConnectionModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="connect()">Connect</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // State
+        let apiBase = '';
+        let ws = null;
+        let isConnected = false;
+        let currentProvider = 'local';
+        let sessionId = generateSessionId();
+        let messageCount = 0;
+        let isRecording = false;
+        let mediaRecorder = null;
+        let audioChunks = [];
+        
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            updateSessionInfo();
+            setProvider('local');
+            startServiceStatusPolling();
+        });
+        
+        // Generate session ID
+        function generateSessionId() {
+            return 'sess-' + Math.random().toString(36).substr(2, 9);
+        }
+        
+        // Update session info display
+        function updateSessionInfo() {
+            document.getElementById('sessionId').textContent = sessionId.slice(0, 16) + '...';
+            document.getElementById('provider').textContent = currentProvider === 'local' ? 'Local LLM' : 'Cloud';
+            document.getElementById('msgCount').textContent = messageCount;
+            document.getElementById('lastActive').textContent = messageCount > 0 ? 'Just now' : '--';
+        }
+        
+        // Set provider
+        function setProvider(provider) {
+            currentProvider = provider;
+            document.getElementById('btnLocal').classList.toggle('active', provider === 'local');
+            document.getElementById('btnCloud').classList.toggle('active', provider === 'cloud');
+            updateSessionInfo();
+        }
+        
+        // Modal functions
+        function showConnectionModal() {
+            document.getElementById('connectionModal').classList.add('show');
+        }
+        
+        function hideConnectionModal() {
+            document.getElementById('connectionModal').classList.remove('show');
+        }
+        
+        // Connection
+        async function connect() {
+            const host = document.getElementById('robotIp').value;
+            if (!host) {
+                addLog('warn', 'Please enter robot IP address');
+                return;
+            }
+            
+            apiBase = host;
+            
+            try {
+                const response = await fetch(`http://${apiBase}/health`);
+                if (response.ok) {
+                    isConnected = true;
+                    updateConnectionStatus(true);
+                    hideConnectionModal();
+                    addLog('info', `Connected to robot at ${host}`);
+                    connectWebSocket();
+                } else {
+                    throw new Error('Health check failed');
+                }
+            } catch (error) {
+                isConnected = false;
+                updateConnectionStatus(false);
+                addLog('error', `Connection failed: ${error.message}`);
+            }
+        }
+        
+        function updateConnectionStatus(connected) {
+            const statusEl = document.getElementById('connectionStatus');
+            const dotEl = document.getElementById('statusDot');
+            const textEl = document.getElementById('connectionText');
+            
+            if (connected) {
+                statusEl.classList.remove('disconnected');
+                statusEl.classList.add('connected');
+                dotEl.classList.remove('disconnected');
+                dotEl.classList.add('connected');
+                textEl.textContent = 'Connected';
+            } else {
+                statusEl.classList.remove('connected');
+                statusEl.classList.add('disconnected');
+                dotEl.classList.remove('connected');
+                dotEl.classList.add('disconnected');
+                textEl.textContent = 'Disconnected';
+            }
+        }
+        
+        // WebSocket
+        function connectWebSocket() {
+            const wsUrl = `ws://${apiBase}/ws`;
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = () => {
+                addLog('info', 'WebSocket connected');
+            };
+            
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                handleWebSocketMessage(data);
+            };
+            
+            ws.onclose = () => {
+                addLog('warn', 'WebSocket disconnected');
+                setTimeout(connectWebSocket, 3000);
+            };
+            
+            ws.onerror = (error) => {
+                addLog('error', 'WebSocket error');
+            };
+        }
+        
+        function handleWebSocketMessage(data) {
+            if (data.type === 'alarm') {
+                addEvent('alarm', 'Alarm triggered', data);
+            } else if (data.type === 'gesture') {
+                addEvent('gesture', `Gesture: ${data.gesture}`, data);
+            } else if (data.type === 'person') {
+                addEvent('person', `Person detected (ID: ${data.id})`, data);
+            }
+        }
+        
+        // Service status polling
+        function startServiceStatusPolling() {
+            setInterval(async () => {
+                if (!isConnected) return;
+                
+                try {
+                    // Check LLM server
+                    const llmResponse = await fetch(`http://${apiBase}/health`);
+                    updateServiceStatus('llm', llmResponse.ok ? 'online' : 'offline');
+                    
+                    // Check audio status
+                    const audioResponse = await fetch(`http://${apiBase}/api/audio/status`);
+                    const audioData = await audioResponse.json();
+                    updateServiceStatus('audio', audioData.available ? 'online' : 'offline');
+                } catch (error) {
+                    // Services might not all be available via API, that's ok
+                }
+            }, 5000);
+        }
+        
+        function updateServiceStatus(service, status) {
+            const indicator = document.getElementById(`${service}-indicator`);
+            const statusText = document.getElementById(`${service}-status`);
+            
+            indicator.className = `service-indicator ${status}`;
+            statusText.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+        }
+        
+        // Chat functions
+        function addMessage(role, content, metadata = {}) {
+            const container = document.getElementById('chatMessages');
+            
+            // Remove empty state if present
+            const emptyState = container.querySelector('.empty-state');
+            if (emptyState) emptyState.remove();
+            
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `chat-message ${role}`;
+            
+            const time = new Date().toLocaleTimeString();
+            
+            if (role === 'system') {
+                messageDiv.textContent = content;
+            } else {
+                messageDiv.innerHTML = `
+                    <div class="message-avatar ${role}">${role === 'user' ? 'U' : 'AI'}</div>
+                    <div class="message-content">
+                        <div class="message-bubble ${role}">${content}</div>
+                        <div class="message-meta">
+                            <span>${time}</span>
+                            ${metadata.elapsed ? `<span>• ${metadata.elapsed}ms</span>` : ''}
+                            ${metadata.provider ? `<span>• ${metadata.provider}</span>` : ''}
+                            ${role === 'assistant' ? `
+                                <div class="message-actions">
+                                    <button class="message-action-btn" onclick="playAudio('${metadata.audioFile || ''}')">🔊 Play</button>
+                                    <button class="message-action-btn" onclick="copyText('${content.replace(/'/g, "\\'")}')">📋 Copy</button>
+                                </div>
+                            ` : ''}
+                        </div>
+                    </div>
+                `;
+            }
+            
+            container.appendChild(messageDiv);
+            container.scrollTop = container.scrollHeight;
+            
+            if (role !== 'system') {
+                messageCount++;
+                updateSessionInfo();
+            }
+        }
+        
+        async function sendMessage() {
+            const input = document.getElementById('chatInput');
+            const text = input.value.trim();
+            
+            if (!text) return;
+            if (!isConnected) {
+                addLog('error', 'Not connected to robot');
+                return;
+            }
+            
+            addMessage('user', text);
+            input.value = '';
+            input.style.height = 'auto';
+            
+            // Show typing indicator
+            showTypingIndicator();
+            
+            try {
+                // For text input, we'd need a text endpoint. For now, show placeholder
+                removeTypingIndicator();
+                addMessage('assistant', 'Text input is not yet supported. Please use voice recording instead.', {
+                    provider: currentProvider
+                });
+            } catch (error) {
+                removeTypingIndicator();
+                addLog('error', `Send failed: ${error.message}`);
+            }
+        }
+        
+        // Recording functions
+        async function toggleRecording() {
+            if (isRecording) {
+                stopRecording();
+            } else {
+                startRecording();
+            }
+        }
+        
+        async function startRecording() {
+            if (!isConnected) {
+                addLog('error', 'Not connected to robot');
+                return;
+            }
+            
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream);
+                audioChunks = [];
+                
+                mediaRecorder.ondataavailable = (event) => {
+                    audioChunks.push(event.data);
+                };
+                
+                mediaRecorder.onstop = async () => {
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                    await sendAudioToLLM(audioBlob);
+                };
+                
+                mediaRecorder.start();
+                isRecording = true;
+                
+                const btn = document.getElementById('recordBtn');
+                btn.classList.add('recording');
+                
+                addLog('info', 'Recording started...');
+            } catch (error) {
+                addLog('error', `Recording failed: ${error.message}`);
+            }
+        }
+        
+        function stopRecording() {
+            if (mediaRecorder && isRecording) {
+                mediaRecorder.stop();
+                mediaRecorder.stream.getTracks().forEach(track => track.stop());
+                isRecording = false;
+                
+                const btn = document.getElementById('recordBtn');
+                btn.classList.remove('recording');
+                
+                addLog('info', 'Recording stopped');
+            }
+        }
+        
+        async function sendAudioToLLM(audioBlob) {
+            showTypingIndicator();
+            
+            try {
+                const formData = new FormData();
+                formData.append('file', audioBlob, 'recording.wav');
+                
+                const endpoint = currentProvider === 'local' 
+                    ? `/api/llm_chat/local` 
+                    : `/api/llm_chat/cloud`;
+                
+                const response = await fetch(`http://${apiBase}${endpoint}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        duration: 4,
+                        session_id: sessionId,
+                        reset: false,
+                        max_tokens: 512,
+                        temperature: 0.3,
+                        play_audio: document.getElementById('autoPlayAudio').checked
+                    })
+                });
+                
+                removeTypingIndicator();
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    addMessage('assistant', data.text, {
+                        elapsed: data.elapsed_ms,
+                        provider: data.provider,
+                        audioFile: data.audio_file
+                    });
+                    
+                    if (data.transcript) {
+                        addMessage('system', `Transcript: "${data.transcript}"`);
+                    }
+                } else {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+            } catch (error) {
+                removeTypingIndicator();
+                addLog('error', `LLM request failed: ${error.message}`);
+                addMessage('assistant', 'Sorry, I encountered an error processing your request.');
+            }
+        }
+        
+        // Handle audio file upload
+        async function handleAudioUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            if (!isConnected) {
+                addLog('error', 'Not connected to robot');
+                return;
+            }
+            
+            showTypingIndicator();
+            
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+                
+                // First upload the file
+                const uploadResponse = await fetch(`http://${apiBase}/api/audio/upload`, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!uploadResponse.ok) {
+                    throw new Error('Upload failed');
+                }
+                
+                addMessage('user', `📎 Uploaded: ${file.name}`);
+                
+                removeTypingIndicator();
+                addLog('info', `Audio uploaded: ${file.name}`);
+            } catch (error) {
+                removeTypingIndicator();
+                addLog('error', `Upload failed: ${error.message}`);
+            }
+            
+            // Reset input
+            event.target.value = '';
+        }
+        
+        // UI Helpers
+        function showTypingIndicator() {
+            const container = document.getElementById('chatMessages');
+            const indicator = document.createElement('div');
+            indicator.className = 'chat-message assistant';
+            indicator.id = 'typingIndicator';
+            indicator.innerHTML = `
+                <div class="message-avatar assistant">AI</div>
+                <div class="message-content">
+                    <div class="message-bubble assistant">
+                        <div class="loading-dots">
+                            <span></span>
+                            <span></span>
+                            <span></span>
+                        </div>
+                    </div>
+                </div>
+            `;
+            container.appendChild(indicator);
+            container.scrollTop = container.scrollHeight;
+        }
+        
+        function removeTypingIndicator() {
+            const indicator = document.getElementById('typingIndicator');
+            if (indicator) indicator.remove();
+        }
+        
+        function autoResizeTextarea(textarea) {
+            textarea.style.height = 'auto';
+            textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
+        }
+        
+        function handleInputKeydown(event) {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                sendMessage();
+            }
+        }
+        
+        function clearChat() {
+            const container = document.getElementById('chatMessages');
+            container.innerHTML = `
+                <div class="empty-state">
+                    <svg class="empty-state-icon" viewBox="0 0 24 24">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                    </svg>
+                    <div class="empty-state-text">Start a conversation with the robot</div>
+                    <div style="margin-top: var(--space-sm); font-size: 0.8125rem; color: var(--text-tertiary);">
+                        Record audio or type a message below
+                    </div>
+                </div>
+            `;
+            messageCount = 0;
+            updateSessionInfo();
+            addLog('info', 'Chat cleared');
+        }
+        
+        function resetSession() {
+            sessionId = generateSessionId();
+            messageCount = 0;
+            updateSessionInfo();
+            addLog('info', 'Session reset');
+        }
+        
+        // Event and Log functions
+        function addEvent(type, title, data) {
+            const panel = document.getElementById('eventsPanel');
+            
+            // Remove empty state
+            const emptyState = panel.querySelector('.empty-state');
+            if (emptyState) emptyState.remove();
+            
+            const eventDiv = document.createElement('div');
+            eventDiv.className = 'event-item';
+            
+            const time = new Date().toLocaleTimeString();
+            
+            eventDiv.innerHTML = `
+                <div class="event-header">
+                    <span class="event-type ${type}">${type.toUpperCase()}</span>
+                    <span class="event-time">${time}</span>
+                </div>
+                <div class="event-data">${title}</div>
+            `;
+            
+            panel.insertBefore(eventDiv, panel.firstChild);
+            
+            // Keep only last 50 events
+            while (panel.children.length > 50) {
+                panel.removeChild(panel.lastChild);
+            }
+        }
+        
+        function addLog(level, message) {
+            const panel = document.getElementById('logsPanel');
+            
+            const logDiv = document.createElement('div');
+            logDiv.className = 'log-entry';
+            
+            const time = new Date().toLocaleTimeString();
+            
+            logDiv.innerHTML = `
+                <span class="log-time">${time}</span>
+                <span class="log-level ${level}">${level.toUpperCase()}</span>
+                <span class="log-message">${message}</span>
+            `;
+            
+            panel.appendChild(logDiv);
+            panel.scrollTop = panel.scrollHeight;
+            
+            // Keep only last 100 logs
+            while (panel.children.length > 100) {
+                panel.removeChild(panel.firstChild);
+            }
+        }
+        
+        function switchTab(tab) {
+            document.querySelectorAll('.panel-tab').forEach(t => t.classList.remove('active'));
+            event.target.classList.add('active');
+            
+            document.getElementById('eventsPanel').style.display = tab === 'events' ? 'block' : 'none';
+            document.getElementById('logsPanel').style.display = tab === 'logs' ? 'block' : 'none';
+        }
+        
+        // Utility functions
+        function playAudio(filePath) {
+            if (!filePath) {
+                addLog('warn', 'No audio file available');
+                return;
+            }
+            addLog('info', `Playing audio: ${filePath}`);
+        }
+        
+        function copyText(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                addLog('info', 'Text copied to clipboard');
+            });
+        }
+    </script>
+</body>
+</html>

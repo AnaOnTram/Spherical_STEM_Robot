@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Gesture Debug</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #111; color: #eee; font-family: monospace; font-size: 14px; }
+  h1 { text-align: center; padding: 12px; background: #1a1a2e; color: #7eb8f7; letter-spacing: 2px; }
+
+  .top-bar {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 16px; background: #1a1a1a; border-bottom: 1px solid #333;
+  }
+  .top-bar input {
+    background: #222; border: 1px solid #555; color: #eee;
+    padding: 4px 8px; border-radius: 4px; font-family: monospace; width: 200px;
+  }
+  .top-bar button {
+    background: #2563eb; color: #fff; border: none;
+    padding: 5px 14px; border-radius: 4px; cursor: pointer;
+  }
+  .top-bar button:hover { background: #1d4ed8; }
+  #status-dot { width: 10px; height: 10px; border-radius: 50%; background: #555; }
+  #status-dot.live { background: #22c55e; }
+  #fps-label { color: #888; }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 1fr 380px;
+    gap: 12px;
+    padding: 12px;
+    height: calc(100vh - 90px);
+  }
+
+  /* --- Camera panel --- */
+  .camera-panel {
+    background: #000; border-radius: 8px; overflow: hidden;
+    display: flex; align-items: center; justify-content: center; position: relative;
+  }
+  #camera-img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  #no-cam { color: #555; font-size: 16px; }
+
+  /* --- Right panel --- */
+  .right-panel { display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
+
+  .card {
+    background: #1c1c2e; border: 1px solid #2a2a4a; border-radius: 8px; padding: 12px;
+  }
+  .card h2 { color: #7eb8f7; font-size: 12px; letter-spacing: 1px; margin-bottom: 10px; text-transform: uppercase; }
+
+  /* --- Finger visualizer --- */
+  .fingers { display: flex; gap: 6px; justify-content: center; align-items: flex-end; height: 80px; }
+  .finger {
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+  }
+  .finger-bar {
+    width: 28px; border-radius: 6px 6px 0 0;
+    transition: background 0.1s, height 0.1s;
+    background: #2a2a4a;
+  }
+  .finger-bar.up { background: #22c55e; }
+  .finger-bar.thumb { border-radius: 6px; }
+  .finger-label { font-size: 10px; color: #666; }
+  .finger.up .finger-label { color: #22c55e; }
+
+  /* Finger heights (thumb shorter) */
+  .finger-bar.thumb { height: 40px; }
+  .finger-bar.index  { height: 72px; }
+  .finger-bar.middle { height: 80px; }
+  .finger-bar.ring   { height: 70px; }
+  .finger-bar.pinky  { height: 55px; }
+
+  /* Count badge */
+  .count-badge {
+    text-align: center; font-size: 48px; font-weight: bold;
+    color: #7eb8f7; line-height: 1;
+    margin: 4px 0;
+  }
+  .count-sub { text-align: center; color: #555; font-size: 11px; }
+
+  /* --- Gesture info table --- */
+  .info-table { width: 100%; border-collapse: collapse; }
+  .info-table td { padding: 4px 6px; }
+  .info-table td:first-child { color: #888; width: 110px; }
+  .info-table td:last-child { color: #eee; }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 4px;
+    background: #2a2a4a; font-weight: bold;
+  }
+  .badge.good { background: #166534; color: #86efac; }
+  .badge.warn { background: #713f12; color: #fcd34d; }
+
+  /* --- Landmark canvas --- */
+  #lm-canvas {
+    background: #0a0a1a; border-radius: 6px;
+    width: 100%; height: 220px; display: block;
+  }
+
+  /* --- Orientation --- */
+  .orientation-badge {
+    display: inline-block; padding: 3px 10px; border-radius: 12px;
+    font-size: 12px; font-weight: bold;
+  }
+  .orientation-badge.up   { background: #1e3a5f; color: #7eb8f7; }
+  .orientation-badge.down { background: #3b1f1f; color: #f87171; }
+</style>
+</head>
+<body>
+
+<h1>GESTURE DEBUG</h1>
+
+<div class="top-bar">
+  <label>Pi address:</label>
+  <input id="host-input" value="192.168.1.x:8000" placeholder="192.168.1.x:8000">
+  <button onclick="connect()">Connect</button>
+  <div id="status-dot"></div>
+  <span id="status-label" style="color:#888">Disconnected</span>
+  <span id="fps-label" style="margin-left:auto"></span>
+</div>
+
+<div class="layout">
+  <!-- Camera -->
+  <div class="camera-panel">
+    <img id="camera-img" style="display:none">
+    <div id="no-cam">Camera stream will appear here</div>
+  </div>
+
+  <!-- Right panel -->
+  <div class="right-panel">
+
+    <!-- Finger count -->
+    <div class="card">
+      <h2>Finger Count</h2>
+      <div class="count-badge" id="count-num">—</div>
+      <div class="count-sub" id="count-sub">no hand detected</div>
+
+      <div class="fingers" style="margin-top:12px">
+        <div class="finger" id="f-thumb">
+          <div class="finger-bar thumb"></div>
+          <div class="finger-label">Thumb</div>
+        </div>
+        <div class="finger" id="f-index">
+          <div class="finger-bar index"></div>
+          <div class="finger-label">Index</div>
+        </div>
+        <div class="finger" id="f-middle">
+          <div class="finger-bar middle"></div>
+          <div class="finger-label">Mid</div>
+        </div>
+        <div class="finger" id="f-ring">
+          <div class="finger-bar ring"></div>
+          <div class="finger-label">Ring</div>
+        </div>
+        <div class="finger" id="f-pinky">
+          <div class="finger-bar pinky"></div>
+          <div class="finger-label">Pinky</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Gesture info -->
+    <div class="card">
+      <h2>Gesture Info</h2>
+      <table class="info-table">
+        <tr><td>Gesture</td><td><span class="badge" id="g-name">—</span></td></tr>
+        <tr><td>Confidence</td><td id="g-conf">—</td></tr>
+        <tr><td>Handedness</td><td id="g-hand">—</td></tr>
+        <tr><td>Hand orient.</td><td id="g-orient">—</td></tr>
+        <tr><td>Timestamp</td><td id="g-ts" style="font-size:11px;color:#666">—</td></tr>
+      </table>
+    </div>
+
+    <!-- Landmark canvas -->
+    <div class="card">
+      <h2>Hand Skeleton</h2>
+      <canvas id="lm-canvas"></canvas>
+    </div>
+
+  </div>
+</div>
+
+<script>
+let apiBase = '';
+let pollTimer = null;
+let lastTs = null;
+let frameCount = 0;
+let fpsTimer = null;
+
+const FINGER_IDS = ['f-thumb','f-index','f-middle','f-ring','f-pinky'];
+const FINGER_NAMES = ['Thumb','Index','Mid','Ring','Pinky'];
+
+// MediaPipe hand connections
+const CONNECTIONS = [
+  [0,1],[1,2],[2,3],[3,4],
+  [0,5],[5,6],[6,7],[7,8],
+  [0,9],[9,10],[10,11],[11,12],
+  [0,13],[13,14],[14,15],[15,16],
+  [0,17],[17,18],[18,19],[19,20],
+  [5,9],[9,13],[13,17]
+];
+
+function connect() {
+  const host = document.getElementById('host-input').value.trim();
+  if (!host) return;
+  apiBase = host;
+
+  // Camera feed
+  const img = document.getElementById('camera-img');
+  img.src = `http://${apiBase}/api/stream/video`;
+  img.style.display = 'block';
+  img.onerror = () => { img.style.display='none'; document.getElementById('no-cam').style.display='flex'; };
+  document.getElementById('no-cam').style.display = 'none';
+
+  // Start polling gesture status
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(fetchGesture, 150);
+
+  // FPS counter
+  if (fpsTimer) clearInterval(fpsTimer);
+  fpsTimer = setInterval(() => {
+    document.getElementById('fps-label').textContent = `${frameCount} polls/s`;
+    frameCount = 0;
+  }, 1000);
+}
+
+async function fetchGesture() {
+  if (!apiBase) return;
+  try {
+    const res = await fetch(`http://${apiBase}/api/gesture/status`);
+    if (!res.ok) throw new Error(res.status);
+    const d = await res.json();
+    frameCount++;
+    updateUI(d);
+    setConnected(true);
+  } catch (e) {
+    setConnected(false);
+  }
+}
+
+function setConnected(ok) {
+  const dot = document.getElementById('status-dot');
+  const lbl = document.getElementById('status-label');
+  dot.className = ok ? 'live' : '';
+  lbl.textContent = ok ? 'Live' : 'Connection error';
+  lbl.style.color = ok ? '#22c55e' : '#ef4444';
+}
+
+function updateUI(d) {
+  const hasHand = d.landmarks && d.landmarks.length > 0;
+  const fingerStates = d.finger_states || [false,false,false,false,false];
+  const fingerCount = d.finger_count >= 0 ? d.finger_count : '—';
+
+  // Count badge
+  document.getElementById('count-num').textContent = hasHand ? fingerCount : '—';
+  document.getElementById('count-sub').textContent = hasHand
+    ? `${d.gesture} (${(d.confidence * 100).toFixed(0)}%)`
+    : 'no hand detected';
+
+  // Finger bars
+  FINGER_IDS.forEach((id, i) => {
+    const el = document.getElementById(id);
+    const bar = el.querySelector('.finger-bar');
+    if (fingerStates[i]) {
+      el.classList.add('up');
+      bar.classList.add('up');
+    } else {
+      el.classList.remove('up');
+      bar.classList.remove('up');
+    }
+  });
+
+  // Gesture info
+  const nameBadge = document.getElementById('g-name');
+  nameBadge.textContent = d.gesture || '—';
+  nameBadge.className = 'badge ' + (d.gesture && d.gesture !== 'none' ? 'good' : '');
+
+  const conf = d.confidence > 0 ? `${(d.confidence * 100).toFixed(1)}%` : '—';
+  const confEl = document.getElementById('g-conf');
+  confEl.textContent = conf;
+  confEl.style.color = d.confidence > 0.8 ? '#22c55e' : d.confidence > 0.5 ? '#fcd34d' : '#f87171';
+
+  document.getElementById('g-hand').textContent = d.handedness || '—';
+
+  const orientEl = document.getElementById('g-orient');
+  if (d.hand_up === true) {
+    orientEl.innerHTML = '<span class="orientation-badge up">↑ UP</span>';
+  } else if (d.hand_up === false) {
+    orientEl.innerHTML = '<span class="orientation-badge down">↓ DOWN</span>';
+  } else {
+    orientEl.textContent = '—';
+  }
+
+  document.getElementById('g-ts').textContent = d.timestamp
+    ? d.timestamp.slice(11, 23)
+    : '—';
+
+  // Draw skeleton
+  drawLandmarks(d.landmarks || []);
+}
+
+function drawLandmarks(landmarks) {
+  const canvas = document.getElementById('lm-canvas');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.offsetWidth;
+  const H = canvas.offsetHeight;
+  canvas.width = W;
+  canvas.height = H;
+
+  ctx.clearRect(0, 0, W, H);
+
+  if (!landmarks.length) {
+    ctx.fillStyle = '#333';
+    ctx.font = '13px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('No hand detected', W / 2, H / 2);
+    return;
+  }
+
+  const pad = 20;
+  const sx = x => pad + x * (W - pad * 2);
+  const sy = y => pad + y * (H - pad * 2);
+
+  // Connections
+  ctx.strokeStyle = '#2563eb88';
+  ctx.lineWidth = 2;
+  for (const [a, b] of CONNECTIONS) {
+    if (!landmarks[a] || !landmarks[b]) continue;
+    ctx.beginPath();
+    ctx.moveTo(sx(landmarks[a].x), sy(landmarks[a].y));
+    ctx.lineTo(sx(landmarks[b].x), sy(landmarks[b].y));
+    ctx.stroke();
+  }
+
+  // Landmark dots
+  landmarks.forEach((lm, i) => {
+    const isTip = [4, 8, 12, 16, 20].includes(i);
+    const isWrist = i === 0;
+    ctx.beginPath();
+    ctx.arc(sx(lm.x), sy(lm.y), isTip ? 6 : isWrist ? 7 : 4, 0, Math.PI * 2);
+    ctx.fillStyle = isTip ? '#22c55e' : isWrist ? '#f59e0b' : '#7eb8f7';
+    ctx.fill();
+  });
+
+  // Landmark index labels (tips only)
+  ctx.fillStyle = '#fff';
+  ctx.font = '9px monospace';
+  ctx.textAlign = 'center';
+  [4, 8, 12, 16, 20].forEach(i => {
+    if (landmarks[i]) {
+      ctx.fillText(i, sx(landmarks[i].x), sy(landmarks[i].y) - 10);
+    }
+  });
+}
+</script>
+</body>
+</html>

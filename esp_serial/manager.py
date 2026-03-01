@@ -19,21 +19,42 @@ def resolve_port(port: str) -> str:
         port: Port path or "auto" for auto-detection
         
     Returns:
-        Resolved port path
+        Resolved port path, or empty string if no device found.
     """
     if port.lower() == "auto":
         try:
-            from utils.esp32_port import find_esp32_port
+            from utils.esp32_port import find_esp32_port, list_all_serial_ports
             detected_port = find_esp32_port()
             if detected_port:
                 logger.info(f"Auto-detected ESP32 at {detected_port}")
                 return detected_port
             else:
-                logger.warning("Auto-detection failed, falling back to /dev/ttyACM0")
-                return "/dev/ttyACM0"
+                # Log all available serial ports to help diagnose the issue
+                import glob
+                tty_ports = []
+                for pattern in ['/dev/ttyACM*', '/dev/ttyUSB*', '/dev/ttyAMA*']:
+                    tty_ports.extend(glob.glob(pattern))
+                if tty_ports:
+                    logger.warning(
+                        f"Auto-detection found serial ports but none matched ESP32 VID/PID: "
+                        f"{tty_ports}. Check USB chip type or run: python utils/esp32_port.py"
+                    )
+                    # Return the first available ACM/USB port as best-effort fallback
+                    for p in sorted(tty_ports):
+                        if '/dev/ttyACM' in p or '/dev/ttyUSB' in p:
+                            logger.warning(f"Using best-effort fallback port: {p}")
+                            return p
+                else:
+                    logger.warning(
+                        "Auto-detection failed: no ttyACM*/ttyUSB* devices found in /dev. "
+                        "Check: (1) USB cable supports data (not charge-only), "
+                        "(2) ESP32 is powered on, "
+                        "(3) kernel driver loaded: dmesg | grep -i 'cp210\|ch34\|cdc_acm'"
+                    )
+                return ""
         except Exception as e:
-            logger.error(f"Auto-detection error: {e}, falling back to /dev/ttyACM0")
-            return "/dev/ttyACM0"
+            logger.error(f"Auto-detection error: {e}")
+            return ""
     return port
 
 
@@ -63,6 +84,13 @@ class SerialManager:
         with self._lock:
             if self._connected:
                 return True
+            if not self.port:
+                logger.error(
+                    "No serial port available. Ensure the ESP32 is connected via a "
+                    "data-capable USB cable and the kernel driver is loaded "
+                    "(run: dmesg | grep -E 'cp210|ch34|cdc_acm')."
+                )
+                return False
             try:
                 self._serial = pyserial.Serial(
                     port=self.port,

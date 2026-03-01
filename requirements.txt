@@ -30,6 +30,9 @@ websockets>=12.0
 # Async support
 anyio>=4.2.0
 
+# Text-to-speech (Cantonese / multilingual via Microsoft Edge TTS)
+edge-tts>=6.1.9
+
 # Machine learning - choose ONE based on your platform:
 #
 # Option 1: For Raspberry Pi 5 with Python 3.11 (recommended)
@@ -42,5 +45,6 @@ anyio>=4.2.0
 # Option 3: Skip ML features (gesture/sound detection will use basic fallbacks)
 #   No additional packages needed
 #
-# Optional: MediaPipe for gesture detection (x86/x64 only, not ARM)
-# mediapipe>=0.10.9
+# MediaPipe Tasks API for gesture recognition (GestureRecognizer)
+# Required on x86/x64; on ARM64 (Raspberry Pi) install the tflite-support wheel instead.
+mediapipe>=0.10.9

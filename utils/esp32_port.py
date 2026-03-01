@@ -63,11 +63,12 @@ def is_esp32_device(port: str) -> bool:
     # Common ESP32 USB VID/PID combinations:
     # - Silicon Labs CP210x: 10c4:ea60, 10c4:ea70
     # - QinHeng CH340: 1a86:7523
+    # - QinHeng CH343/CH343G (USB Single Serial): 1a86:55d3, 1a86:55d4
     # - Espressif USB JTAG/serial: 303a:*
     esp32_vendors = {
-        '10c4': ['ea60', 'ea70'],  # Silicon Labs
-        '1a86': ['7523'],           # QinHeng
-        '303a': None                # Espressif (any product)
+        '10c4': ['ea60', 'ea70'],        # Silicon Labs CP210x
+        '1a86': ['7523', '55d3', '55d4'],# QinHeng CH340 / CH343
+        '303a': None,                    # Espressif (any product)
     }
     
     vendor = info.get('vendor', '').lower()

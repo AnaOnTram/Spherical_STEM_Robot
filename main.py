@@ -108,6 +108,18 @@ class SphericalBot:
                     classifier=self.yamnet_classifier,
                 )
 
+            # Initialize LLM services (ASR, LLM, TTS)
+            try:
+                from LLM_Chat.service import preload_services
+                import concurrent.futures
+                logger.info("Starting LLM services (ASR, LLM, TTS)...")
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(preload_services)
+                    future.result()  # Block until services are ready
+                logger.info("LLM services started successfully")
+            except Exception as e:
+                logger.warning(f"LLM services failed to start: {e} (will retry on first request)")
+
             logger.info("Initialization complete")
             return True
 
@@ -135,7 +147,7 @@ class SphericalBot:
         if not self.video_encoder or not self.video_encoder.is_running:
             return
 
-        from api.websocket import ws_manager
+        from api.routes import update_gesture_state, _quiz_state
 
         logger.info("Starting detection loop")
 
@@ -149,12 +161,41 @@ class SphericalBot:
                 if self.gesture_detector:
                     gestures = self.gesture_detector.detect(frame)
                     for gesture in gestures:
-                        if gesture.gesture.value != "none":
-                            await ws_manager.broadcast_gesture(
-                                gesture.gesture.value,
-                                gesture.confidence,
-                                gesture.handedness,
-                            )
+                        lm = gesture.hand_landmarks
+                        finger_count = -1
+                        finger_states = [False] * 5
+                        hand_up = None
+                        landmarks_json = []
+
+                        if lm is not None and self.gesture_detector._use_mediapipe:
+                            try:
+                                finger_states = self.gesture_detector.get_finger_states(lm)
+                                finger_count = sum(finger_states[1:])  # skip thumb
+                                hand_up = lm[0].y > lm[9].y
+                                landmarks_json = [
+                                    {"x": p.x, "y": p.y, "z": p.z} for p in lm
+                                ]
+                            except Exception:
+                                pass
+
+                        update_gesture_state(
+                            gesture.gesture.value,
+                            gesture.confidence,
+                            gesture.handedness,
+                            finger_count,
+                            finger_states,
+                            landmarks_json,
+                            hand_up,
+                        )
+
+                        # Forward finger count to the quiz engine if one is active
+                        if finger_count >= 1:
+                            try:
+                                _engine = _quiz_state.get("engine")
+                                if _engine is not None:
+                                    _engine.handle_finger_count(finger_count)
+                            except Exception:
+                                pass
 
                 # Human tracking
                 if self.human_tracker:
@@ -255,6 +296,13 @@ class SphericalBot:
         if self.serial_manager:
             self.serial_manager.disconnect()
 
+        # Stop LLM services (ASR, LLM, TTS)
+        try:
+            from LLM_Chat.service import shutdown_all_services
+            shutdown_all_services()
+        except Exception as e:
+            logger.warning(f"LLM service shutdown error: {e}")
+
         logger.info("Spherical Robot stopped")
 
 
@@ -352,114 +400,8 @@ def main():
 
     # Create FastAPI app
     from api.routes import create_app
-    from api.websocket import ws_manager
 
     app = create_app()
-
-    # Add WebSocket endpoint
-    @app.websocket("/ws")
-    async def websocket_endpoint(websocket):
-        await ws_manager.handle_connection(websocket)
-
-    # Add Audio WebSocket endpoint for live audio streaming
-    from fastapi import WebSocket, WebSocketDisconnect
-
-    @app.websocket("/ws/audio")
-    async def audio_websocket(websocket: WebSocket):
-        """Bidirectional audio WebSocket - stream from server and receive from client."""
-        await websocket.accept()
-        logger.info("Audio WebSocket client connected")
-
-        if not bot.audio_recorder or not bot.audio_recorder.is_recording:
-            await websocket.close(code=1011, reason="Audio not available")
-            return
-
-        try:
-            # Send audio metadata first
-            await websocket.send_json({
-                "type": "audio_config",
-                "sample_rate": bot.audio_recorder.sample_rate,
-                "channels": 1,
-                "format": "int16",
-                "noise_reduction": bot.audio_recorder.noise_reduction_enabled,
-            })
-
-            # Start playback handler task
-            playback_task = asyncio.create_task(
-                handle_audio_playback_websocket(websocket, bot.audio_player)
-            )
-
-            # Stream audio chunks to client
-            buffer = []
-            chunk_duration_ms = 100
-            buffer_samples = int(bot.audio_recorder.sample_rate * chunk_duration_ms / 1000)
-            
-            while True:
-                chunk = bot.audio_recorder.get_audio(timeout=0.02)
-                
-                if chunk is not None:
-                    buffer.append(chunk)
-                    total_samples = sum(len(c) for c in buffer)
-                    
-                    if total_samples >= buffer_samples:
-                        combined = np.concatenate(buffer)
-                        samples_to_send = min(len(combined), buffer_samples)
-                        await websocket.send_bytes(combined[:samples_to_send].tobytes())
-                        
-                        if len(combined) > samples_to_send:
-                            buffer = [combined[samples_to_send:]]
-                        else:
-                            buffer = []
-                        
-                        await asyncio.sleep(0.001)
-                else:
-                    if buffer:
-                        combined = np.concatenate(buffer)
-                        await websocket.send_bytes(combined.tobytes())
-                        buffer = []
-                    await asyncio.sleep(0.01)
-                    
-        except WebSocketDisconnect:
-            logger.info("Audio WebSocket client disconnected")
-        except Exception as e:
-            logger.error(f"Audio WebSocket error: {e}")
-        finally:
-            if playback_task:
-                playback_task.cancel()
-                try:
-                    await playback_task
-                except asyncio.CancelledError:
-                    pass
-
-    async def handle_audio_playback_websocket(websocket: WebSocket, player):
-        """Handle incoming audio data from client for playback."""
-        try:
-            while True:
-                # Receive audio data from client
-                data = await websocket.receive()
-                
-                if "bytes" in data:
-                    # Received binary audio data
-                    audio_bytes = data["bytes"]
-                    if player and not player.is_playing:
-                        # Play the received audio
-                        player.play_audio_data(audio_bytes)
-                        logger.debug(f"Playing received audio: {len(audio_bytes)} bytes")
-                elif "text" in data:
-                    # Handle text commands
-                    import json
-                    try:
-                        msg = json.loads(data["text"])
-                        if msg.get("type") == "play_audio":
-                            # Client wants to play specific audio
-                            pass
-                    except json.JSONDecodeError:
-                        pass
-                        
-        except WebSocketDisconnect:
-            pass
-        except Exception as e:
-            logger.error(f"Audio playback handler error: {e}")
 
     # Start bot tasks on startup
     @app.on_event("startup")
@@ -469,6 +411,17 @@ def main():
     @app.on_event("shutdown")
     async def on_shutdown():
         await bot.stop()
+
+    # Suppress noisy WebSocket-not-found 403 lines from the access log
+    class _SuppressWS403(logging.Filter):
+        def filter(self, record):
+            msg = record.getMessage()
+            return not (
+                ('"WebSocket' in msg and '403' in msg)
+                or 'connection rejected (403 Forbidden)' in msg
+            )
+    logging.getLogger("uvicorn.access").addFilter(_SuppressWS403())
+    logging.getLogger("uvicorn.error").addFilter(_SuppressWS403())
 
     # Run server
     logger.info(f"Starting API server on {args.host}:{args.port}")

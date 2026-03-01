@@ -1,7 +1,8 @@
 """E-Ink image processor for 4.2" display (400x300, 1-bit)."""
 import logging
+import re
 from pathlib import Path
-from typing import Optional, Union
+from typing import List, Optional, Union
 
 import numpy as np
 
@@ -11,6 +12,16 @@ except ImportError:
     Image = None
 
 from config import EINK_WIDTH, EINK_HEIGHT, EINK_IMAGE_SIZE
+
+# CJK font search order — install with: sudo apt install fonts-noto-cjk
+_CJK_FONT_PATHS = [
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansCJKsc-Regular.otf",
+    "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    "/usr/share/fonts/noto/NotoSansCJK-Regular.ttc",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -216,6 +227,142 @@ class EInkImageProcessor:
             y += line_height
 
         return self.process(img)
+
+    # ------------------------------------------------------------------ #
+    #  CJK helpers                                                        #
+    # ------------------------------------------------------------------ #
+
+    def _load_cjk_font(self, size: int):
+        """Return a TrueType font with CJK support, or PIL default on failure."""
+        from PIL import ImageFont
+        for path in _CJK_FONT_PATHS:
+            if Path(path).exists():
+                try:
+                    return ImageFont.truetype(path, size)
+                except Exception:
+                    continue
+        logger.warning(
+            "No CJK font found — Chinese text will not render. "
+            "Install with: sudo apt install fonts-noto-cjk"
+        )
+        return ImageFont.load_default()
+
+    @staticmethod
+    def _clean_text(text: str) -> str:
+        """Strip emojis (supplementary-plane chars) and trailing '→' decorators."""
+        # Remove supplementary-plane characters (emojis, symbols outside BMP)
+        text = re.sub(r"[^\u0000-\uFFFF]", "", text)
+        # Remove trailing arrow that was only there as an emoji separator
+        text = re.sub(r"\s*→\s*$", "", text)
+        return text.strip()
+
+    @staticmethod
+    def _wrap_text(text: str, font, draw, max_width: int) -> List[str]:
+        """Wrap text character-by-character (works for CJK and Latin)."""
+        lines: List[str] = []
+        current = ""
+        for char in text:
+            candidate = current + char
+            w = draw.textbbox((0, 0), candidate, font=font)[2]
+            if w > max_width and current:
+                lines.append(current)
+                current = char
+            else:
+                current = candidate
+        if current:
+            lines.append(current)
+        return lines
+
+    def render_lesson(
+        self,
+        question: str,
+        options: List[str],
+        title: str = "WonderBall STEM",
+    ) -> bytes:
+        """Render a structured MCQ lesson card for the 400×300 e-ink display.
+
+        Layout
+        ──────
+          ┌─────────────────────────────────────┐  Y=0
+          │■ WonderBall STEM                    │  Header  30 px (black bg)
+          ├─────────────────────────────────────┤  Y=30
+          │  Question text (word-wrapped)       │  Question 86 px
+          ├─────────────────────────────────────┤  Y=116
+          │  ●A  option one                     │  ╮
+          │  ●B  option two                     │  ║  4 × 46 px = 184 px
+          │  ●C  option three                   │  ║
+          │  ●D  option four                    │  ╯
+          └─────────────────────────────────────┘  Y=300
+
+        Returns 15 000 bytes of 1-bit packed data ready for the ESP32.
+        """
+        from PIL import Image, ImageDraw
+
+        img = Image.new("L", (self.width, self.height), 255)
+        draw = ImageDraw.Draw(img)
+
+        PAD = 10          # horizontal margin
+        HDR_H = 30        # header bar height
+        Q_TOP = HDR_H + 6
+        Q_LINE_H = 26     # px per wrapped question line
+        Q_LINES = 3       # max lines reserved for question
+        Q_AREA_H = Q_LINES * Q_LINE_H   # = 78 px
+        DIV_Y = HDR_H + Q_AREA_H + 8   # = 116
+        OPT_AREA = self.height - DIV_Y  # = 184 px
+        OPT_H = OPT_AREA // 4           # = 46 px
+        CIRCLE_R = 11
+        LABELS = ["A", "B", "C", "D"]
+
+        font_hdr = self._load_cjk_font(16)
+        font_q   = self._load_cjk_font(22)
+        font_opt = self._load_cjk_font(18)
+        font_lbl = self._load_cjk_font(15)
+
+        # ── Header ───────────────────────────────────────────────────────
+        draw.rectangle([0, 0, self.width - 1, HDR_H - 1], fill=0)
+        draw.text((PAD, (HDR_H - 18) // 2), title, fill=255, font=font_hdr)
+
+        # ── Question ─────────────────────────────────────────────────────
+        q_clean = self._clean_text(question)
+        q_lines = self._wrap_text(q_clean, font_q, draw, self.width - 2 * PAD)
+        y = Q_TOP
+        for line in q_lines[:Q_LINES]:
+            draw.text((PAD, y), line, fill=0, font=font_q)
+            y += Q_LINE_H
+
+        # ── Divider ───────────────────────────────────────────────────────
+        draw.line([(0, DIV_Y), (self.width - 1, DIV_Y)], fill=0, width=2)
+
+        # ── Options ──────────────────────────────────────────────────────
+        for i, (lbl, raw_opt) in enumerate(zip(LABELS, options[:4])):
+            opt_text = self._clean_text(raw_opt)
+            y0 = DIV_Y + 2 + i * OPT_H
+
+            # Row separator (between options)
+            if i > 0:
+                draw.line([(0, y0 - 1), (self.width - 1, y0 - 1)], fill=0, width=1)
+
+            # Filled circle label
+            cy = y0 + OPT_H // 2
+            cx = PAD + CIRCLE_R
+            draw.ellipse(
+                [cx - CIRCLE_R, cy - CIRCLE_R, cx + CIRCLE_R, cy + CIRCLE_R],
+                fill=0,
+            )
+            lw = draw.textbbox((0, 0), lbl, font=font_lbl)[2]
+            lh = draw.textbbox((0, 0), lbl, font=font_lbl)[3]
+            draw.text((cx - lw // 2, cy - lh // 2 - 1), lbl, fill=255, font=font_lbl)
+
+            # Option text (single line; truncated if too long)
+            tx = PAD + CIRCLE_R * 2 + 8
+            ty = y0 + (OPT_H - 20) // 2
+            opt_lines = self._wrap_text(opt_text, font_opt, draw, self.width - tx - PAD)
+            if opt_lines:
+                draw.text((tx, ty), opt_lines[0], fill=0, font=font_opt)
+
+        # Convert directly to 1-bit (simple threshold, no dithering — keeps text sharp)
+        img_1bit = img.convert("1")
+        return self._pack_to_bytes(img_1bit)
 
     def create_pattern(self, pattern_type: str = "checkerboard") -> bytes:
         """Create test pattern for E-Ink display.
