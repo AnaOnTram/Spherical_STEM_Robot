@@ -115,7 +115,7 @@ LFM_VOCODER_PATH = os.getenv("LFM_VOCODER_PATH", f"{LFM_MODEL_DIR}/vocoder-LFM2.
 # Text-only model (for separate ASR/TTS pipeline)
 # When USE_LOCAL_ASR_TTS is True, this text-only model is used instead of the audio model
 # Using the Gemma 1B model for faster inference on Pi
-LFM_TEXT_MODEL_PATH = os.getenv("LFM_TEXT_MODEL_PATH", f"{LFM_MODEL_DIR}/Qwen3-1.7B-UD-Q4_K_XL.gguf")
+LFM_TEXT_MODEL_PATH = os.getenv("LFM_TEXT_MODEL_PATH", f"{LFM_MODEL_DIR}/Qwen3.5-0.8B-UD-K4_K_XL.gguf")
 
 # Legacy compatibility - points to audio model by default
 LFM_MODEL_PATH = LFM_AUDIO_MODEL_PATH

@@ -197,20 +197,9 @@ class SphericalBot:
                             except Exception:
                                 pass
 
-                # Human tracking
+                # Human tracking (detection only — no WebSocket broadcast)
                 if self.human_tracker:
-                    persons = self.human_tracker.detect(frame)
-                    for person in persons:
-                        await ws_manager.broadcast_person(
-                            person.id,
-                            {
-                                "x": person.bbox.x,
-                                "y": person.bbox.y,
-                                "width": person.bbox.width,
-                                "height": person.bbox.height,
-                            },
-                            person.confidence,
-                        )
+                    self.human_tracker.detect(frame)
 
                 # Small delay to prevent CPU overload
                 await asyncio.sleep(0.033)  # ~30 FPS

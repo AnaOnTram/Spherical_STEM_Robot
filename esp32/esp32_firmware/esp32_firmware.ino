@@ -723,6 +723,13 @@ void EPD_4in2_V2_Show() {
     EPD_SendData(0x01);
 }
 
+static uint8_t reverseBits(uint8_t value) {
+    value = ((value & 0xF0) >> 4) | ((value & 0x0F) << 4);
+    value = ((value & 0xCC) >> 2) | ((value & 0x33) << 2);
+    value = ((value & 0xAA) >> 1) | ((value & 0x55) << 1);
+    return value;
+}
+
 void EPD_4in2_V2_Display(const uint8_t* image) {
     EPD_Reset();
     EPD_WaitUntilIdle_high();
@@ -759,8 +766,9 @@ void EPD_4in2_V2_Display(const uint8_t* image) {
     
     // Write image data
     EPD_SendCommand(0x24);
-    for (int i = 0; i < IMAGE_BUFFER_SIZE; i++) {
-        EPD_SendData(image[i]);
+    // Rotate the 1-bit framebuffer by 180 degrees for the mounted panel.
+    for (int i = IMAGE_BUFFER_SIZE - 1; i >= 0; i--) {
+        EPD_SendData(reverseBits(image[i]));
     }
     
     // Trigger display refresh
