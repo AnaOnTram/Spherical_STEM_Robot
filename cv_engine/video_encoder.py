@@ -1,4 +1,5 @@
 """Video capture and H.264 encoding for streaming."""
+
 import asyncio
 import logging
 import queue
@@ -14,7 +15,13 @@ try:
 except ImportError:
     cv2 = None
 
-from config import CAMERA_DEVICE, CAMERA_WIDTH, CAMERA_HEIGHT, CAMERA_FPS
+from config import (
+    CAMERA_DEVICE,
+    CAMERA_WIDTH,
+    CAMERA_HEIGHT,
+    CAMERA_FPS,
+    CAMERA_ROTATION_DEGREES,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -22,10 +29,12 @@ logger = logging.getLogger(__name__)
 @dataclass
 class VideoStream:
     """Video stream configuration."""
+
     device: str = CAMERA_DEVICE
     width: int = CAMERA_WIDTH
     height: int = CAMERA_HEIGHT
     fps: int = CAMERA_FPS
+    rotation_degrees: int = CAMERA_ROTATION_DEGREES
     codec: str = "h264"
 
 
@@ -38,7 +47,9 @@ class VideoEncoder:
         self._capture: Optional["cv2.VideoCapture"] = None
         self._running = False
         self._thread: Optional[threading.Thread] = None
-        self._frame_queue: queue.Queue = queue.Queue(maxsize=2)  # Small queue for low latency
+        self._frame_queue: queue.Queue = queue.Queue(
+            maxsize=2
+        )  # Small queue for low latency
         self._callbacks: list[Callable[[np.ndarray], None]] = []
 
         # Encoding
@@ -48,7 +59,27 @@ class VideoEncoder:
     def _check_cv2(self) -> None:
         """Check if OpenCV is available."""
         if cv2 is None:
-            raise RuntimeError("OpenCV not installed. Install with: pip install opencv-python")
+            raise RuntimeError(
+                "OpenCV not installed. Install with: pip install opencv-python"
+            )
+
+    def _apply_rotation(self, frame: np.ndarray) -> np.ndarray:
+        """Rotate frame by configured camera rotation angle."""
+        rotation = int(self.config.rotation_degrees) % 360
+        if rotation == 0:
+            return frame
+        if rotation == 90:
+            return cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+        if rotation == 180:
+            return cv2.rotate(frame, cv2.ROTATE_180)
+        if rotation == 270:
+            return cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+
+        logger.warning(
+            f"Unsupported CAMERA_ROTATION_DEGREES={self.config.rotation_degrees}; "
+            "expected one of 0, 90, 180, 270. Using 0."
+        )
+        return frame
 
     def start(self) -> bool:
         """Start video capture.
@@ -121,6 +152,8 @@ class VideoEncoder:
                     time.sleep(0.001)
                     continue
 
+                frame = self._apply_rotation(frame)
+
                 # Add to queue (drop old frames if full for low latency)
                 try:
                     self._frame_queue.put_nowait(frame)
@@ -169,7 +202,10 @@ class VideoEncoder:
         if not self._capture or not self._capture.isOpened():
             return False, None
 
-        return self._capture.read()
+        ret, frame = self._capture.read()
+        if not ret or frame is None:
+            return False, None
+        return True, self._apply_rotation(frame)
 
     def encode_frame(self, frame: np.ndarray, quality: int = 80) -> bytes:
         """Encode frame to JPEG.

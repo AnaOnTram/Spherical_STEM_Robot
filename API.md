@@ -13,6 +13,7 @@ WebSocket Base URL: `ws://<raspberry-pi-ip>:8000`
 - [Audio Streaming](#audio-streaming)
 - [Audio Playback](#audio-playback)
 - [LLM Voice Chat](#llm-voice-chat)
+- [STEM Education (Hand Gesture Quiz)](#stem-education-hand-gesture-quiz)
 - [E-Ink Display](#e-ink-display)
 - [Alarm Control](#alarm-control)
 - [WebSocket Events](#websocket-events)
@@ -302,6 +303,144 @@ Content-Type: application/json
   "audio_file": "/tmp/spherical_bot_llm_chat/cloud_9b4c0d2a0f9449b0a6c7a0f0a3bdbb2f.wav",
   "provider": "cloud",
   "elapsed_ms": 1842
+}
+```
+
+---
+
+## STEM Education (Hand Gesture Quiz)
+
+The current hand-gesture STEM education flow runs as an interactive multiple-choice quiz.
+
+- Start quiz: `POST /api/quiz/start`
+- Stop quiz: `POST /api/quiz/stop`
+- Check running state: `GET /api/quiz/status`
+- Read live hand state (debug): `GET /api/gesture/status`
+
+### Activate Hand-Gesture Quiz
+```
+POST /api/quiz/start
+Content-Type: application/json
+```
+
+If `questions` is omitted, the built-in question bank is used.
+
+**Request Body (minimal):**
+```json
+{}
+```
+
+**Request Body (customized):**
+```json
+{
+  "voice": "en-US-AriaNeural",
+  "shuffle": false,
+  "result_delay": 2.5,
+  "questions": [
+    {
+      "question": "What force keeps planets in orbit around the Sun?",
+      "options": ["Magnetism", "Gravity", "Friction", "Pressure"],
+      "correct_index": 1,
+      "title": "WonderBall STEM"
+    }
+  ]
+}
+```
+
+| Field | Type | Default | Description |
+|------|------|---------|-------------|
+| voice | string | `en-US-AriaNeural` | Edge TTS voice used to read questions |
+| shuffle | bool | `false` | Randomize question order |
+| result_delay | float | `2.5` | Delay in seconds after answering (range 0.5-10.0) |
+| questions | array\|null | `null` | Optional custom question list |
+
+Each custom question object must include:
+- `question` (string)
+- `options` (array of exactly 4 choices)
+- `correct_index` (int, 0-3)
+- `title` (string, optional)
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Quiz started with 1 questions",
+  "total_questions": 1
+}
+```
+
+### How Hand Gestures Are Used During Quiz
+
+When the quiz is active and waiting for an answer:
+
+- 1 finger -> A
+- 2 fingers -> B
+- 3 fingers -> C
+- 4 fingers -> D
+
+The detection loop injects recognized finger counts into the quiz engine automatically.
+
+### Check Quiz Status
+```
+GET /api/quiz/status
+```
+
+**Response Example:**
+```json
+{
+  "active": true,
+  "state": "waiting_answer",
+  "question_index": 0,
+  "total_questions": 5,
+  "score": 2,
+  "current_question": "What is H2O commonly called?",
+  "options": ["Hydrogen", "Oxygen", "Water", "Salt"],
+  "correct_answer_index": null,
+  "last_answer_correct": null
+}
+```
+
+### Stop Hand-Gesture Quiz
+```
+POST /api/quiz/stop
+```
+
+This cleanly ends the current quiz session.
+
+**Response (active quiz):**
+```json
+{
+  "success": true,
+  "message": "Quiz stopped"
+}
+```
+
+**Response (no active quiz):**
+```json
+{
+  "success": true,
+  "message": "No active quiz to stop"
+}
+```
+
+### Gesture Status (Debug)
+```
+GET /api/gesture/status
+```
+
+Returns the latest recognized hand information from the vision loop.
+
+**Response Example:**
+```json
+{
+  "gesture": "victory",
+  "confidence": 0.93,
+  "handedness": "right",
+  "finger_count": 2,
+  "finger_states": [false, true, true, false, false],
+  "landmarks": [],
+  "hand_up": true,
+  "timestamp": "2026-03-18T10:23:11.110000"
 }
 ```
 

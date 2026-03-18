@@ -23,8 +23,8 @@ Devoting in building stories with both wonderful childs and their loving parents
 - [x] Local LLM Conversation: ASR + TTS, backboned by [LiquidAI/LFM2.5-Audio-1.5B](https://huggingface.co/LiquidAI/LFM2.5-Audio-1.5B)
 - [x] Cloud-based natural language STEM Education: Learning STEM related knowledge through having natural conversation with GPT.  
 - [x] API call: Setted up [API](API.md) server for front-end UI/UX development.
-- [ ] Motion Detection & Gesture Dection: For fall detection and gesture interaction.
-- [ ] Education Content: 
+- [x] Gesture Dection: Using Google's mediapipe library, the solution detects numbers of fingers shown in the camera as input for STEM content interaction. 
+- [x] Education Content: Eight demonstrative question that can be shuffled.
 
 ## Project Framework
 Please refers to this [documentation](framework.md)

@@ -24,6 +24,9 @@ CAMERA_DEVICE = "/dev/video0"
 CAMERA_WIDTH = 640
 CAMERA_HEIGHT = 480
 CAMERA_FPS = 30
+# Camera image rotation in degrees (clockwise): 0, 90, 180, 270
+# Useful when camera mounting orientation is not fixed yet.
+CAMERA_ROTATION_DEGREES = 0
 
 # Audio (USB Audio Device)
 # Run `arecord -l` and `aplay -l` to find correct card numbers
@@ -41,16 +44,18 @@ CAMERA_FPS = 30
 # - "default" - System default device
 #
 AUDIO_PLAYBACK_DEVICE = "auto"  # Auto-detect USB speaker, or use "plughw:3,0"
-AUDIO_RECORD_DEVICE = "auto"    # Auto-detect USB mic, or use "hw:2,0"
-AUDIO_RECORD_DEVICE_2 = None          # Secondary mic for noise cancellation (disabled - using stereo channels instead)
-AUDIO_SAMPLE_RATE = 48000             # USB camera mic native rate (don't use 44100)
-AUDIO_CHANNELS = 2                    # Stereo input from USB camera mic (2 channels)
-AUDIO_OUTPUT_CHANNELS = 1             # Mono output after processing
-AUDIO_CHUNK_SIZE = 1024               # Larger chunks for stereo input (~21ms at 48kHz stereo)
+AUDIO_RECORD_DEVICE = "auto"  # Auto-detect USB mic, or use "hw:2,0"
+AUDIO_RECORD_DEVICE_2 = None  # Secondary mic for noise cancellation (disabled - using stereo channels instead)
+AUDIO_SAMPLE_RATE = 48000  # USB camera mic native rate (don't use 44100)
+AUDIO_CHANNELS = 2  # Stereo input from USB camera mic (2 channels)
+AUDIO_OUTPUT_CHANNELS = 1  # Mono output after processing
+AUDIO_CHUNK_SIZE = 1024  # Larger chunks for stereo input (~21ms at 48kHz stereo)
 
 # Audio Processing
-AUDIO_NOISE_REDUCTION = True          # Enable noise reduction
-AUDIO_DUAL_MIC_ENABLED = False        # Disabled - using stereo mic channels instead of dual mics
+AUDIO_NOISE_REDUCTION = True  # Enable noise reduction
+AUDIO_DUAL_MIC_ENABLED = (
+    False  # Disabled - using stereo mic channels instead of dual mics
+)
 
 # E-Ink Display (via ESP32)
 EINK_WIDTH = 400
@@ -80,7 +85,9 @@ MOTOR_SPEED_MIN = -255
 MOTOR_SPEED_MAX = 255
 
 # LLM Chat (Local LFM2.5)
-LLM_CHAT_LOCAL_BASE_URL = os.getenv("LLM_CHAT_LOCAL_BASE_URL", "http://127.0.0.1:8080/v1")
+LLM_CHAT_LOCAL_BASE_URL = os.getenv(
+    "LLM_CHAT_LOCAL_BASE_URL", "http://127.0.0.1:8080/v1"
+)
 LLM_CHAT_LOCAL_MODEL = os.getenv("LLM_CHAT_LOCAL_MODEL", "")
 LLM_CHAT_LOCAL_SAMPLE_RATE = 24000
 LLM_CHAT_LOCAL_SYSTEM_PROMPT = "Respond with interleaved text and audio."
@@ -88,18 +95,23 @@ LLM_CHAT_LOCAL_SYSTEM_PROMPT = "Respond with interleaved text and audio."
 # System prompt for text-only model (used with separate ASR/TTS pipeline)
 # Tuned for Qwen3-1.7B: small model benefits from explicit role, hard length cap,
 # a concrete answer pattern, and /no_think to suppress chain-of-thought overhead.
-LLM_CHAT_TEXT_SYSTEM_PROMPT = os.getenv("LLM_CHAT_TEXT_SYSTEM_PROMPT",
+LLM_CHAT_TEXT_SYSTEM_PROMPT = os.getenv(
+    "LLM_CHAT_TEXT_SYSTEM_PROMPT",
     "You are a cheerful robot teaching STEM to young children. "
     "Rules: answer in 1-2 short sentences only; use simple everyday words; "
     "always connect the answer to something the child can see or touch; "
     "if asked something off-topic, pivot with 'Great question! Did you know...' "
-    "and share a related science fact. Never use emoji, lists, or markdown. /no_think"
+    "and share a related science fact. Never use emoji, lists, or markdown. /no_think",
 )
 LLM_CHAT_SESSION_MAX_MESSAGES = int(os.getenv("LLM_CHAT_SESSION_MAX_MESSAGES", "20"))
 
 # Auto-start local LFM2.5 server on first request
 # Set to False if you want to start the server manually
-LLM_CHAT_LOCAL_AUTO_START = os.getenv("LLM_CHAT_LOCAL_AUTO_START", "true").lower() in ("true", "1", "yes")
+LLM_CHAT_LOCAL_AUTO_START = os.getenv("LLM_CHAT_LOCAL_AUTO_START", "true").lower() in (
+    "true",
+    "1",
+    "yes",
+)
 
 # LFM2.5 model paths (for local server helpers/scripts)
 _DEFAULT_LFM_MODEL_DIR = "/home/admin/model"
@@ -107,15 +119,25 @@ _DEFAULT_LFM_MODEL_DIR = "/home/admin/model"
 LFM_MODEL_DIR = os.getenv("LFM_MODEL_DIR", _DEFAULT_LFM_MODEL_DIR)
 
 # Audio model (for full LFM audio pipeline with built-in ASR/TTS)
-LFM_AUDIO_MODEL_PATH = os.getenv("LFM_AUDIO_MODEL_PATH", f"{LFM_MODEL_DIR}/LFM2.5-Audio-1.5B-Q4_0.gguf")
-LFM_MMPROJ_PATH = os.getenv("LFM_MMPROJ_PATH", f"{LFM_MODEL_DIR}/mmproj-LFM2.5-Audio-1.5B-Q4_0.gguf")
-LFM_TOKENIZER_PATH = os.getenv("LFM_TOKENIZER_PATH", f"{LFM_MODEL_DIR}/tokenizer-LFM2.5-Audio-1.5B-Q4_0.gguf")
-LFM_VOCODER_PATH = os.getenv("LFM_VOCODER_PATH", f"{LFM_MODEL_DIR}/vocoder-LFM2.5-Audio-1.5B-Q4_0.gguf")
+LFM_AUDIO_MODEL_PATH = os.getenv(
+    "LFM_AUDIO_MODEL_PATH", f"{LFM_MODEL_DIR}/LFM2.5-Audio-1.5B-Q4_0.gguf"
+)
+LFM_MMPROJ_PATH = os.getenv(
+    "LFM_MMPROJ_PATH", f"{LFM_MODEL_DIR}/mmproj-LFM2.5-Audio-1.5B-Q4_0.gguf"
+)
+LFM_TOKENIZER_PATH = os.getenv(
+    "LFM_TOKENIZER_PATH", f"{LFM_MODEL_DIR}/tokenizer-LFM2.5-Audio-1.5B-Q4_0.gguf"
+)
+LFM_VOCODER_PATH = os.getenv(
+    "LFM_VOCODER_PATH", f"{LFM_MODEL_DIR}/vocoder-LFM2.5-Audio-1.5B-Q4_0.gguf"
+)
 
 # Text-only model (for separate ASR/TTS pipeline)
 # When USE_LOCAL_ASR_TTS is True, this text-only model is used instead of the audio model
 # Using the Gemma 1B model for faster inference on Pi
-LFM_TEXT_MODEL_PATH = os.getenv("LFM_TEXT_MODEL_PATH", f"{LFM_MODEL_DIR}/Qwen3.5-0.8B-UD-K4_K_XL.gguf")
+LFM_TEXT_MODEL_PATH = os.getenv(
+    "LFM_TEXT_MODEL_PATH", f"{LFM_MODEL_DIR}/Qwen3.5-0.8B-UD-K4_K_XL.gguf"
+)
 
 # Legacy compatibility - points to audio model by default
 LFM_MODEL_PATH = LFM_AUDIO_MODEL_PATH
@@ -124,7 +146,9 @@ LFM_MODEL_PATH = LFM_AUDIO_MODEL_PATH
 # Intermediate server at http://162.141.92.169:3000
 # INTERMEDIATE_SERVER_AUTH: Custom auth key for intermediate server (NOT the OpenRouter API key)
 INTERMEDIATE_SERVER_AUTH = os.getenv("INTERMEDIATE_SERVER_AUTH")
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")  # Real OpenRouter API key (used by intermediate server)
+OPENROUTER_API_KEY = os.getenv(
+    "OPENROUTER_API_KEY"
+)  # Real OpenRouter API key (used by intermediate server)
 OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "http://162.141.92.169:3000/v1")
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-audio")
 OPENROUTER_SITE_URL = os.getenv("OPENROUTER_SITE_URL")
@@ -141,7 +165,13 @@ OPENAI_TTS_FORMAT = os.getenv("OPENAI_TTS_FORMAT", "wav")
 
 # Local ASR + TTS Services (Alternative to full LFM audio model)
 # Always enabled by default for better performance on Pi
-USE_LOCAL_ASR_TTS = os.getenv("USE_LOCAL_ASR_TTS", "true").lower() in ("true", "1", "yes")
-LOCAL_ASR_URL = os.getenv("LOCAL_ASR_URL", "http://127.0.0.1:8803/recognize")  # Faster Whisper
+USE_LOCAL_ASR_TTS = os.getenv("USE_LOCAL_ASR_TTS", "true").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+LOCAL_ASR_URL = os.getenv(
+    "LOCAL_ASR_URL", "http://127.0.0.1:8803/recognize"
+)  # Faster Whisper
 LOCAL_TTS_URL = os.getenv("LOCAL_TTS_URL", "http://127.0.0.1:8805")  # Piper TTS
 LOCAL_TTS_VOICE = os.getenv("LOCAL_TTS_VOICE", "en_US-amy-medium")
