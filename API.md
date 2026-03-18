@@ -253,13 +253,18 @@ GET /api/audio/playback-status
 
 ## LLM Voice Chat
 
-These endpoints record from the robot's USB microphone for a fixed duration, send the audio to the selected LLM backend, and optionally play the returned audio on the robot speaker.
+Records from the robot's USB microphone, runs the audio through a local
+ASR → LLM → TTS pipeline, and optionally plays the spoken response on the
+robot speaker.
 
-### Local LFM2.5 Voice Chat
+### Local Voice Chat
 ```
 POST /api/llm_chat/local
 Content-Type: application/json
 ```
+
+Pipeline: **Faster Whisper** (ASR, port 8803) → **llama.cpp / Qwen3.5** (LLM, port 8080) → **Piper** (TTS, port 8805)
+
 **Request Body:**
 ```json
 {
@@ -269,42 +274,44 @@ Content-Type: application/json
   "max_tokens": 512,
   "temperature": 0.3,
   "play_audio": true,
-  "system_prompt": null,
-  "tts_voice": null
+  "system_prompt": null
 }
 ```
 
-### Cloud Voice Chat (OpenRouter)
-```
-POST /api/llm_chat/cloud
-Content-Type: application/json
-```
-**Request Body:** Same as above.
-
 **Request Fields:**
 | Field | Type | Default | Description |
-|------|------|---------|-------------|
-| duration | float | 4.0 | Recording duration in seconds (0.5–30) |
-| session_id | string\|null | null | Session ID for multi-turn chat |
-| reset | bool | false | Reset session context |
-| max_tokens | int | 512 | Max tokens for response |
-| temperature | float | 0.3 | Sampling temperature |
-| play_audio | bool | true | Play response audio on the robot |
-| system_prompt | string\|null | null | Override system prompt |
-| tts_voice | string\|null | null | Cloud TTS voice (if enabled) |
+|-------|------|---------|-------------|
+| duration | float | 4.0 | Microphone recording duration in seconds (0.5–30) |
+| session_id | string\|null | null | Session ID for multi-turn conversation (null creates a new session) |
+| reset | bool | false | Clear session context before this turn |
+| max_tokens | int | 512 | Maximum tokens for the LLM response (16–2048) |
+| temperature | float | 0.3 | LLM sampling temperature (0.0–2.0) |
+| play_audio | bool | true | Play the synthesized response audio on the robot speaker |
+| system_prompt | string\|null | null | Override the default system prompt for this session |
 
 **Response:**
 ```json
 {
   "success": true,
-  "session_id": "9b4c0d2a0f9449b0a6c7a0f0a3bdbb2f",
-  "text": "Hello! How can I help?",
-  "transcript": "hello robot",
-  "audio_file": "/tmp/spherical_bot_llm_chat/cloud_9b4c0d2a0f9449b0a6c7a0f0a3bdbb2f.wav",
-  "provider": "cloud",
-  "elapsed_ms": 1842
+  "session_id": "a3f1c2d4-...",
+  "text": "Water is made of tiny pieces called atoms!",
+  "transcript": "what is water made of",
+  "audio_file": "/tmp/tmpXXXXXX.wav",
+  "provider": "local-asr-llm-tts",
+  "elapsed_ms": 3240
 }
 ```
+
+**Response Fields:**
+| Field | Type | Description |
+|-------|------|-------------|
+| success | bool | True if the full pipeline completed |
+| session_id | string | Session ID (use in subsequent requests for multi-turn chat) |
+| text | string | LLM text response |
+| transcript | string\|null | ASR transcript of the user's speech |
+| audio_file | string\|null | Path to synthesized WAV file on the robot (null if TTS unavailable) |
+| provider | string | Always `"local-asr-llm-tts"` |
+| elapsed_ms | int | Total pipeline duration in milliseconds |
 
 ---
 

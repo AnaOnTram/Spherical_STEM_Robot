@@ -1,510 +1,432 @@
-Spherical Robot Framework Architecture
-Executive Summary
-Dual-processor architecture with Raspberry Pi 5 as the primary controller and ESP32 as the motion/peripheral controller. Communication via UART serial connection at 115200 baud.
+# Spherical Robot Framework Architecture
+
+## Executive Summary
+
+Dual-processor architecture with Raspberry Pi 5 as the primary controller and ESP32 as the motion/peripheral controller. Communication via UART serial at 115200 baud. Local AI services (Faster Whisper ASR, llama.cpp/Qwen3.5, Piper TTS) run on the Pi for spoken interaction without cloud dependency.
+
 ---
-Architecture Overview
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                          SPHERICAL ROBOT SYSTEM                              │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌────────────────────────────────────┐          ┌────────────────────────┐ │
-│  │     RASPBERRY PI 5 (Master)        │          │       ESP32 (Slave)    │ │
-│  │                                    │          │                        │ │
-│  │  ┌────────────┐  ┌────────────┐   │   UART   │  ┌──────────────────┐  │ │
-│  │  │    API     │  │    CV      │   │◄────────┼─►│  Command Parser   │  │ │
-│  │  │  Layer     │  │   Engine   │   │          │  └────────┬─────────┘  │ │
-│  │  └─────┬──────┘  └─────┬──────┘   │          │           │            │ │
-│  │        │              │          │          │           ▼            │ │
-│  │  ┌─────▼──────┐  ┌────▼───────┐  │          │  ┌──────────────────┐  │ │
-│  │  │  Serial    │  │  Audio     │  │          │  │  Motor Control   │  │ │
-│  │  │  Manager   │  │  Manager   │  │          │  │  (L298 Driver)   │  │ │
-│  │  └─────┬──────┘  └───────┬────┘  │          │  └────────┬─────────┘  │ │
-│  └────────┼────────────────┼───────┘          │           │            │ │
-│           │                │                  │           ▼            │ │
-│  ┌────────▼────────┐ ┌────▼──────────────┐   │  ┌──────────────────┐  │ │
-│  │ Web/Mobile      │ │ HDMI/Audio        │   │  │ E-Ink Display    │  │ │
-│  │ Interface       │ │ Output            │   │  │ (SPI)            │  │ │
-│  └─────────────────┘ └───────────────────┘   │  └──────────────────┘  │ │
-│                                            │                          │ │
-└────────────────────────────────────────────┼──────────────────────────┘ │
-                                             │                            │
-                                    ┌────────▼─────────┐                 │
-                                    │   POWER UNIT     │                 │
-                                    │  2x 18650 (7.4V) │                 │
-                                    │  → Step Down 5V  │                 │
-                                    └──────────────────┘                 │
-                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+
+## Architecture Overview
+
+```mermaid
+graph TB
+    Client["Web / Mobile Client"]
+
+    subgraph Pi5["Raspberry Pi 5 (Master)"]
+        API["API Layer\n(FastAPI + WebSocket :8000)"]
+        CV["CV Engine\n(MediaPipe · YAMNet)"]
+        AudioMgr["Audio Manager\n(recorder · player)"]
+        LLMChat["LLM Chat Service\n(oral_chat_with_llm)"]
+        Education["Education / Quiz Engine"]
+        EspSerial["ESP Serial Manager"]
+    end
+
+    subgraph LocalAI["Local AI Services (on Pi)"]
+        Whisper["Faster Whisper ASR\n:8803"]
+        LlamaCpp["llama.cpp / Qwen3.5\n:8080"]
+        Piper["Piper TTS\n:8805"]
+    end
+
+    subgraph ESP32Sys["ESP32 (Slave)"]
+        CmdParser["Command Parser"]
+        MotorCtrl["Motor Control\n(L298 Driver)"]
+        EInk["E-Ink Display\n(SPI)"]
+    end
+
+    Power["Power Unit\n2×18650 7.4V → Step-down 5V"]
+
+    Client -->|"HTTP / WebSocket"| API
+    API --> AudioMgr
+    API --> LLMChat
+    API --> Education
+    API --> EspSerial
+    CV -->|"gesture / alarm events"| API
+    EspSerial -->|"UART 115200 baud"| CmdParser
+    CmdParser --> MotorCtrl
+    CmdParser --> EInk
+    LLMChat --> Whisper
+    LLMChat --> LlamaCpp
+    LLMChat --> Piper
+    Power -.->|"5V"| Pi5
+    Power -.->|"5V"| ESP32Sys
+```
+
 ---
-Layer 1: Communication Protocol
-Physical Layer
-- Interface: UART (Serial)
-- Baud Rate: 115200
-- Data Bits: 8
-- Stop Bits: 1
-- Parity: None
-- Flow Control: None
-Protocol Framing
-Command Format (RPi5 → ESP32)
+
+## Layer 1: Communication Protocol
+
+### Physical Layer
+- **Interface:** UART (Serial)
+- **Baud Rate:** 115200
+- **Data Bits:** 8 / Stop Bits: 1 / Parity: None / Flow Control: None
+
+### Protocol Framing
+
+**Command Format (RPi5 → ESP32)**
+```
 <CMD><PARAM_LENGTH>\n<DATA>\n<CRC>
+```
 | Component | Format | Description |
 |-----------|--------|-------------|
-| CMD | String | Command identifier (e.g., MVEL, DIMG) |
+| CMD | String | Command identifier (e.g., `MVEL`, `DIMG`) |
 | PARAM_LENGTH | Integer | Length of data in bytes |
 | DATA | Binary | Command-specific data |
 | CRC | Hex | 16-bit CRC-CCITT |
-| Terminator | \n | Newline character |
-Response Format (ESP32 → RPi5)
+| Terminator | `\n` | Newline character |
+
+**Response Format (ESP32 → RPi5)**
+```
 <STATUS><MESSAGE_LENGTH>\n<MESSAGE>\n
+```
 | Component | Format | Description |
 |-----------|--------|-------------|
-| STATUS | String | OK, ERR, or PENDING |
+| STATUS | String | `OK`, `ERR`, or `PENDING` |
 | MESSAGE_LENGTH | Integer | Length of message |
 | MESSAGE | String | Response message or data |
-| Terminator | \n | Newline character |
-Command Set
-Motion Control Commands
-MVEL - Motor Velocity
+| Terminator | `\n` | Newline character |
+
+### Command Set
+
+**Motion Control**
+
+`MVEL` — Motor Velocity
+```
 MVEL<4>\n<left_speed><right_speed><duration_ms>\n<CRC>
-- left_speed: int16 (-255 to 255), 0 = stop
-- right_speed: int16 (-255 to 255), 0 = stop
-- duration_ms: uint16 (0 = indefinite)
-- Response: OK or ERR
-MSTOP - Emergency Stop
+```
+- `left_speed`: int16 (−255 to 255), 0 = stop
+- `right_speed`: int16 (−255 to 255), 0 = stop
+- `duration_ms`: uint16 (0 = indefinite)
+
+`MSTOP` — Emergency Stop
+```
 MSTOP<0>\n\n<CRC>
-- Immediate motor stop
-- Response: OK
-Display Commands
-DIMG - Display Image
+```
+
+**Display**
+
+`DIMG` — Display Image
+```
 DIMG<15000>\n<15000 bytes of image data>\n<CRC>
-- Image data: 1-bit packed, 400x300 pixels (15KB total)
-- Response: OK or ERR
-DCLEAR - Clear Display
-DCLEAR<0>\n\n<CRC>
-- Clear to all white
-- Response: OK
-DSTATUS - Display Status
-DSTATUS<0>\n\n<CRC>
-- Response: STATUS<json>\n with display info
-System Commands
-SRESET - Soft Reset
-SHALT - Enter Deep Sleep
-SPING - Heartbeat/Ping
+```
+- Image data: 1-bit packed, 400×300 pixels (15 KB total)
+
+`DCLEAR` — Clear Display | `DSTATUS` — Display Status
+
+**System**
+
+| Command | Description |
+|---------|-------------|
+| `SRESET` | Soft reset |
+| `SHALT` | Enter deep sleep |
+| `SPING` | Heartbeat / ping |
+
 ---
-Layer 2: Raspberry Pi 5 Framework
-Module Structure
+
+## Layer 2: Raspberry Pi 5 Framework
+
+### Module Structure
+
+```
 spherical_bot/
 ├── api/
-│   ├── routes.py              # FastAPI endpoints
-│   ├── websocket.py           # WebSocket for streaming
-│   └── middleware.py          # Auth, logging
-├── cv_engine/
-│   ├── gesture_detector.py    # MediaPipe hand tracking
-│   ├── human_tracker.py       # Person detection
-│   ├── image_processor.py     # E-Ink image preparation
-│   └── video_encoder.py       # H.264 streaming
+│   ├── routes.py              # FastAPI REST endpoints
+│   └── websocket.py           # WebSocket event broadcasting
 ├── audio/
-│   ├── yamnet_classifier.py   # Sound classification
-│   ├── alarm_manager.py       # Alarm triggering
-│   ├── player.py              # Audio playback
-│   └── recorder.py            # Audio recording
-├── serial/
-│   ├── manager.py             # Serial connection manager
-│   ├── protocol.py            # Protocol encoder/decoder
-│   └── commands.py            # Command builders
+│   ├── yamnet_classifier.py   # YAMNet sound classification
+│   ├── alarm_manager.py       # Crying detection & alarm state machine
+│   ├── notification_manager.py# Webhook / local notification dispatch
+│   ├── player.py              # Audio playback (ALSA)
+│   ├── recorder.py            # Audio recording (ALSA)
+│   └── cross_platform_recorder.py
+├── cv_engine/
+│   ├── gesture_detector.py    # MediaPipe hand tracking & finger count
+│   ├── human_tracker.py       # Person detection
+│   ├── image_processor.py     # E-Ink image prep (Floyd-Steinberg dither)
+│   └── video_encoder.py       # MJPEG streaming
 ├── education/
-│   ├── content_manager.py     # STEM content rendering
-│   ├── lesson_engine.py       # Interactive lessons
-│   └── assets/                # Graphics, sounds
+│   ├── content_manager.py     # STEM content loading
+│   ├── lesson_engine.py       # Lesson sequencing
+│   └── quiz_engine.py         # Gesture-based MCQ quiz
+├── LLM_Chat/
+│   ├── service.py             # oral_chat_with_llm + synthesize_speech
+│   ├── __init__.py
+│   └── local/
+│       └── fast-whisper-host.py  # Faster Whisper ASR HTTP service (:8803)
+├── esp_serial/
+│   ├── manager.py             # Serial connection & auto-detect
+│   ├── protocol.py            # Protocol encoder / decoder
+│   └── commands.py            # Command builders
+├── utils/
+│   ├── audio_detect.py
+│   ├── esp32_port.py
+│   └── serial_detect.py
+├── config.py                  # All runtime configuration
 └── main.py                    # Application entry point
-Key Components
-image_processor.py
-class EInkImageProcessor:
-    """Prepares images for 4.2" E-Ink display (400x300, 1-bit)"""
-    
-    def process(self, image_path: str) -> bytes:
-        """
-        Pipeline:
-        1. Load image
-        2. Crop to 4:3 aspect ratio
-        3. Resize to 400x300
-        4. Convert to grayscale
-        5. Apply Floyd-Steinberg dithering
-        6. Pack to 1-bit (MSB first)
-        7. Return 15KB bytes
-        """
-        pass
-serial/manager.py
-class SerialManager:
-    """Manages UART communication with ESP32"""
-    
-    def __init__(self, port="/dev/ttyS0", baudrate=115200):
-        self.serial_connection = None
-        self._lock = threading.Lock()
-    
-    def send_command(self, command: Command) -> Response:
-        """Send command and wait for response (timeout: 5s)"""
-        pass
-    
-    def send_async(self, command: Command, callback: Callable):
-        """Send command asynchronously"""
-        pass
-API Endpoints
-- POST /api/movement/move - Control motors
-- POST /api/display/update - Update E-Ink display
-- GET /api/stream/video - H.264 video stream
-- GET /api/stream/audio - Audio stream
-- GET /api/education/lessons - STEM content
+```
+
+### API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/health` | Health check |
+| GET | `/api/status` | System status |
+| POST | `/api/system/ping` | Ping ESP32 |
+| POST | `/api/system/reset` | Reset ESP32 |
+| POST | `/api/movement/move` | Control motors |
+| POST | `/api/movement/stop` | Emergency stop |
+| GET | `/api/stream/video` | MJPEG video stream |
+| GET | `/api/stream/snapshot` | JPEG snapshot |
+| GET | `/api/stream/audio` | WAV audio stream |
+| WS | `/ws/audio` | PCM audio WebSocket |
+| WS | `/ws` | Event WebSocket |
+| POST | `/api/audio/upload` | Play uploaded audio file |
+| POST | `/api/audio/play-base64` | Play base64 audio |
+| POST | `/api/audio/tone` | Play tone |
+| POST | `/api/audio/stop` | Stop playback |
+| POST | `/api/tts/speak` | Edge TTS → speaker |
+| POST | `/api/llm_chat/local` | Voice chat (ASR → LLM → TTS) |
+| POST | `/api/display/update` | Update E-Ink display |
+| POST | `/api/display/clear` | Clear E-Ink display |
+| POST | `/api/quiz/start` | Start STEM gesture quiz |
+| POST | `/api/quiz/stop` | Stop quiz |
+| GET | `/api/quiz/status` | Quiz state |
+| GET | `/api/gesture/status` | Live gesture debug |
+| GET/POST | `/api/alarm/*` | Alarm control & configuration |
+
 ---
-Layer 3: ESP32 Framework
-Module Structure
+
+## Layer 3: ESP32 Framework
+
+### Module Structure
+
+```
 spherical_bot_esp32/
-├── config.h                    # Pin definitions
+├── config.h
 ├── communication/
-│   ├── serial_protocol.h       # Protocol decoder/encoder
-│   ├── command_handler.h       # Command router
-│   └── response_builder.h      # Response formatter
+│   ├── serial_protocol.h
+│   ├── command_handler.h
+│   └── response_builder.h
 ├── motor_control/
-│   ├── l298_driver.h           # Motor driver
-│   ├── pid_controller.h        # PID for smooth movement
-│   └── movement_logic.h        # Movement algorithms
+│   ├── l298_driver.h
+│   ├── pid_controller.h
+│   └── movement_logic.h
 ├── display/
-│   ├── epd_driver.h            # E-Ink SPI driver (reuse existing)
-│   ├── image_buffer.h          # Image buffer (reuse existing)
-│   └── display_manager.h       # Display state machine
+│   ├── epd_driver.h
+│   ├── image_buffer.h
+│   └── display_manager.h
 └── system/
-    ├── watchdog.h              # System watchdog
-    └── power_management.h      # Power control
-command_handler.h
-class CommandHandler {
-public:
-    void handleMVEL(uint8_t* data);   // Motor velocity
-    void handleMSTOP();                // Stop motors
-    void handleDIMG(uint8_t* data);   // Display image
-    void handleDCLEAR();              // Clear display
-    void handleSRESET();              // Soft reset
-};
+    ├── watchdog.h
+    └── power_management.h
+```
+
 ---
-STATE MACHINE DIAGRAMS
-System-Level State Machine
-┌─────────────┐
-│    BOOT     │ ←────────────────────────────────────────────────────────────┐
-└──────┬──────┘                                                              │
-       │                                                                     │
-       ▼                                                                     │
-┌──────────────────────┐                                                    │
-│  INITIALIZATION      │                                                    │
-│  - RPi5 services     │                                                    │
-│  - ESP32 init        │                                                    │
-│  - Serial connect    │                                                    │
-└──────────┬───────────┘                                                    │
-           │                                                                 │
-           ▼                                                                 │
-    ┌──────────────┐                                                        │
-    │ ACTIVE STATE │◄────────────────────────────────────────────────────────┘
-    └──────┬───────┘  (after reset/error recovery)
-           │
-    ┌──────┴────────────────────────────┐
-    │                                  │
-    ▼                                  ▼
-┌─────────────────┐          ┌─────────────────┐
-│   MONITORING    │          │   EDUCATION     │
-│                 │          │                 │
-│ - Video stream  │          │ - Display       │
-│ - Audio detect  │          │   content       │
-│ - Sound detect  │          │ - Audio         │
-│ - Alert         │          │   playback      │
-└────────┬────────┘          └────────┬────────┘
-         │                            │
-         │ User command/Event         │
-         └────────────┬───────────────┘
-                      ▼
-              ┌─────────────────┐
-              │ PROCESS COMMAND │
-              │ - Parse request │
-              │ - Execute       │
-              │ - Send to ESP32 │
-              └────────┬────────┘
-                       │
-            ┌──────────┴──────────┐
-            │                     │
-            ▼                     ▼
-      ┌──────────┐         ┌──────────┐
-      │ LOCAL    │         │ SERIAL   │
-      │ ACTION   │         │ COMMAND  │
-      └──────────┘         └──────────┘
-RPi5 State Machine
-┌─────────────┐
-│   START     │
-└──────┬──────┘
-       │
-       ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                             INITIALIZATION                                  │
-│  1. Load Configuration                                                       │
-│  2. Initialize Serial Manager                                                │
-│  3. Start CV Engine (MediaPipe, YAMNet)                                      │
-│  4. Start Audio Manager                                                      │
-│  5. Start API Server (FastAPI + WebSocket)                                  │
-│  6. Load Education Content                                                   │
-│  7. Connect to ESP32 via UART                                                │
-└─────────────────────────────────────────────────────────────────────────────┘
-       │
-       ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│    READY  ◄───────────────────────────────────────────────────────────────┐
-└──────┬─────────────────────────────────────────────────────────────────────┤
-       │                                                                     │
-       │ ┌─────────────────────────────────────────────────────────────┐    │
-       ├─▶│ BACKGROUND TASKS                                            │    │
-       │  │  ┌──────────┐  ┌──────────┐  ┌──────────┐               │    │
-       │  │  │ Video    │  │ Audio    │  │ Gesture  │               │    │
-       │  │  │ Stream   │  │ Process  │  │ Detect   │               │    │
-       │  │  └────┬─────┘  └────┬─────┘  └────┬─────┘               │    │
-       │  └───────┼────────────┼────────────┼─────────────────────────┘    │
-       │          ▼            ▼            ▼                             │
-       │    ┏━━━━━━━━━━┓ ┏━━━━━━━━━━┓ ┏━━━━━━━━━━┓                    │
-       │    ┃  Event   ┃ ┃  Event   ┃ ┃  Event   ┃                    │
-       │    ┃  Queues  ┃ ┃  Queues  ┃ ┃  Queues  ┃                    │
-       │    ┗━━━━━━┯━━━━┛ ┗━━━━━━┯━━━━┛ ┗━━━━━━┯━━━━┛                    │
-┌───────┴───────┬────┴──────────┬────┴──────────┬────┘                 │
-│               │               │               │                       │
-▼               ▼               ▼               ▼                       │
-┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐                  │
-│ API      │  │ Serial   │  │ Education│  │ Alarm    │                  │
-│ Response │  │ Command  │  │ Router   │  │ Trigger  │                  │
-└────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘                  │
-     │             │             │             │                         │
-     └─────────────┴─────────────┴─────────────┼─────────────────────────┘
-                                           │
-                                           ▼
-                                ┌─────────────────────┐
-                                │  SERIAL MANAGER     │
-                                │  - Encode Command   │
-                                │  - Send via UART    │
-                                │  - Wait Response    │
-                                └─────────┬───────────┘
-                                          │
-                     ┌────────────────────┴────────────────────┐
-                     │                                         │
-                     ▼                                         ▼
-              ┌─────────────┐                           ┌─────────────┐
-              │    OK       │                           │    ERR      │
-              │ Update state│                           │ Log/retry   │
-              └─────────────┘                           └─────────────┘
-ESP32 State Machine
-┌─────────────┐
-│   BOOT      │
-└──────┬──────┘
-       │
-       ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                             INITIALIZATION                                  │
-│  1. Initialize Serial (115200 baud)                                         │
-│  2. Initialize Motor Driver (L298)                                          │
-│  3. Initialize E-Ink Display (SPI)                                          │
-│  4. Initialize Command Handler                                              │
-│  5. Initialize Watchdog                                                     │
-└─────────────────────────────────────────────────────────────────────────────┘
-       │
-       ▼
-┌─────────────┐
-│   READY     │
-└──────┬──────┘
-       │
-       │ ┌─────────────────────────────────────────────────────────────┐
-       ├─▶│ MAIN LOOP                                                  │
-       │  │  ┌──────────┐  ┌──────────┐  ┌──────────┐               │
-       │  │  │ Serial   │  │ Motor    │  │ Display  │               │
-       │  │  │ Listener │  │ Update   │  │ Update   │               │
-       │  │  └────┬─────┘  └────┬─────┘  └────┬─────┘               │
-       │  └───────┼────────────┼────────────┼─────────────────────────┘
-       │          ▼            │            │                         │
-       │    ┌────────┐         │            │                         │
-       │    │ Frame  │         │            │                         │
-       │    │ Ready  │         │            │                         │
-       │    └───┬────┘         │            │                         │
-       │        │              │            │                         │
-       │        ▼              │            │                         │
-       │    ┌─────────────────────────────────────────────┐           │
-       │    │         COMMAND ROUTER                       │           │
-       │    │  ┌───────┐ ┌───────┐ ┌───────┐ ┌───────┐   │           │
-       │    │  │ Motion│ │Display│ │ System│ │Status │   │           │
-       │    │  └───┬───┘ └───┬───┘ └───┬───┘ └───┬───┘   │           │
-       │    └──────┼────────┼────────┼────────┼───────┘           │
-       │           │        │        │        │                   │
-       ▼           ▼        ▼        ▼        ▼                   │
-  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐      │
-  │MVEL,    │ │DIMG,    │ │SRESET,  │ │SPING    │ │ERR      │      │
-  │MSTOP    │ │DCLEAR   │ │HALT     │ │         │ │Response │      │
-  │Set motors│ │Store in │ │Reset/   │ │Build    │ │Send     │      │
-  │Send OK  │ │buffer   │ │Sleep    │ │JSON OK  │ │error    │      │
-  └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘ └─────────┘      │
-       │           │           │           │                         │
-       └───────────┼───────────┼───────────┼─────────────────────────┘
-                   │           │           │
-                   ▼           ▼           ▼
-          ┌─────────────────────────────┐
-          │     SEND RESPONSE           │
-          │  - Build status message     │
-          │  - Send via UART            │
-          └─────────────────────────────┘
-Motor Control State Machine
-    ┌────────┐
-    │  IDLE  │
-    └───┬────┘
-        │ MVEL command
-        ▼
-  ┌───────────┐
-  │  PARSING  │
-  └─────┬─────┘
-        │ Parse speeds/duration
-        ▼
-  ┌───────────┐
-  │ VALIDATE  │
-  └─────┬─────┘
-        │
-   ┌────┴────┐
-   │ Valid?  │
-   └─┬─────┬─┘
-     │Yes  │No
-     ▼     ▼
-┌────────┐ ┌──────┐
-│ACCCEL  │ │ ERR  │
-│(PID)   │ │ RESP │
-└───┬────┘ └──────┘
-    │ Set PWM gradually
-    ▼
-┌────────┐
-│MOVING  │◀──────────────────┐
-└───┬────┘                   │
-    │                        │
-    │ ┌────────────────────┐ │
-    │ │ TIMER CHECK        │ │
-    │ │ - Duration done?   │ │
-    │ │ - MSTOP received?  │ │
-    │ └───┬────────────────┘ │
-    │     │                  │
-    │     │ Done/Stop        │
-    │     ▼                  │
-    │  ┌────────┐            │
-    │  │DECEL   │ ◀──────────┘
-    │  │(PID)   │
-    │  └───┬────┘
-    │      │
-    │      │ Gradual stop
-    └──────┘
-           ▼
-        ┌────────┐
-        │  IDLE  │
-        └────────┘
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-          EMERGENCY STOP (MSTOP or watchdog timeout)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-     ▼
-┌─────────────────┐
-│ EMERGENCY STOP  │
-│ - Set speed = 0 │
-│ - Disable PWM   │
-│ - Send OK       │
-└────────┬────────┘
-         ▼
-      ┌────────┐
-      │  IDLE  │
-      └────────┘
-Display Update State Machine
-    ┌────────┐
-    │  IDLE  │
-    └───┬────┘
-        │ DIMG command (15000 bytes)
-        ▼
-  ┌───────────┐
-  │ VALIDATE  │
-  └─────┬─────┘
-        │ Check length == 15000
-   ┌────┴────┐
-   │ Valid?  │
-   └─┬─────┬─┘
-     │Yes  │No
-     ▼     ▼
-┌────────┐ ┌──────┐
-│ STORE  │ │ ERR  │
-│BUFFER  │ │ RESP │
-└───┬────┘ └──────┘
-    │ Store in PSRAM
-    ▼
-┌────────┐
-│ READY  │
-└───┬────┘
-    │ DDISPLAY command
-    ▼
-┌───────────┐
-│ REFRESH   │
-└─────┬─────┘
-      │
-      │ 1. Reset EPD
-      │ 2. Init commands
-      │ 3. Write 15000 bytes
-      │ 4. Trigger refresh
-      ▼
-┌───────────┐
-│ WAIT_DONE │
-└─────┬─────┘
-      │ Wait for BUSY pin (2-4s)
-   ┌──┴─┐
-   │Done?│
-   └─┬──┴┬─┘
-     │Yes│No
-     ▼   ▼
- ┌─────┐ ┌──────┐
- │SLEEP│ │ ERR  │
- │0x10 │ │ RESP │
- └─┬───┘ └───┬──┘
-   │         │
-   └────┬────┘
-        ▼
-     ┌────────┐
-     │  IDLE  │
-     └────────┘
-Sound Detection & Alarm State Machine
-    ┌────────┐
-    │  IDLE  │
-    └───┬────┘
-        │
-        │ ┌─────────────────────────────────────┐
-        ├─▶│ BACKGROUND: Audio Processing        │
-        │  │                                    │
-        │  │ Record 1s → YAMNet → Check Crying │
-        │  └────────┬───────────────────────────┘
-        │           │
-        │           │ confidence > 0.8
-        │           ▼
-        │    ┌────────────────┐
-        │    │ CRYING DETECTED│
-        │    │ - Log event    │
-        │    │ - Start timer  │
-        │    └────────┬───────┘
-        │             │
-        │             │ Still crying?
-        │        ┌────┴────┐
-        │        │Yes     │No
-        │        ▼        ▼
-        │   ┌────────┐ ┌────────┐
-        │   │ ALARM  │ │ CANCEL │
-        │   │ ACTIVE │ │ ALARM  │
-        │   └───┬────┘ └────────┘
-        │       │
-        │       │ 1. Play alarm
-        │       │ 2. Record audio
-        │       │ 3. Notify user
-        │       ▼
-        │   ┌────────────┐
-        │   │  SENT      │
-        │   └─────┬──────┘
-        │         │ Ack/timeout
-        └─────────┼─────────┐
-                  ▼         │
-               ┌────────┐   │
-               │  IDLE  │◀──┘
-               └────────┘
----
+
+## State Machine Diagrams
+
+### System-Level State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> BOOT
+    BOOT --> INITIALIZATION
+    INITIALIZATION --> ACTIVE : all services ready
+
+    state ACTIVE {
+        [*] --> MONITORING
+        MONITORING --> EDUCATION : start quiz
+        MONITORING --> VOICE_CHAT : oral chat request
+        EDUCATION --> MONITORING : quiz stopped
+        VOICE_CHAT --> MONITORING : response delivered
+    }
+
+    ACTIVE --> PROCESS_COMMAND : API request / event
+    PROCESS_COMMAND --> LOCAL_ACTION : local only
+    PROCESS_COMMAND --> SERIAL_COMMAND : requires ESP32
+    LOCAL_ACTION --> ACTIVE
+    SERIAL_COMMAND --> ACTIVE
+    ACTIVE --> INITIALIZATION : reset / error recovery
+```
+
+### RPi5 Startup Sequence
+
+```mermaid
+flowchart TD
+    START([Start]) --> INIT
+
+    subgraph INIT["Initialization"]
+        I1[1. Load config.py]
+        I2[2. Initialize Serial Manager\nauto-detect ESP32]
+        I3[3. Start CV Engine\nMediaPipe · YAMNet]
+        I4[4. Start Audio Manager\nrecorder · player]
+        I5[5. Start API Server\nFastAPI + WebSocket :8000]
+        I6[6. Start LLM Services\nWhisper · llama.cpp · Piper]
+        I7[7. Pre-cache processing audio]
+        I1 --> I2 --> I3 --> I4 --> I5 --> I6 --> I7
+    end
+
+    INIT --> READY([Ready])
+    READY --> BG
+
+    subgraph BG["Background Tasks (concurrent)"]
+        B1[Video Stream\nMJPEG encoder]
+        B2[Audio Processor\nYAMNet classifier]
+        B3[Gesture Detector\nMediaPipe]
+    end
+
+    BG --> EVENT[Event / API Request]
+    EVENT --> API_RESP[API Response]
+    EVENT --> SERIAL[Serial Command → ESP32]
+    EVENT --> EDU[Education / Quiz]
+    EVENT --> ALARM[Alarm Trigger]
+
+    API_RESP --> READY
+    EDU --> READY
+    ALARM --> READY
+    SERIAL --> OK_ERR{OK / ERR?}
+    OK_ERR -->|OK| READY
+    OK_ERR -->|ERR| LOG[Log / Retry] --> READY
+```
+
+### ESP32 State Machine
+
+```mermaid
+flowchart TD
+    BOOT([Boot]) --> INIT
+
+    subgraph INIT["Initialization"]
+        E1[1. Serial 115200 baud]
+        E2[2. Motor Driver L298]
+        E3[3. E-Ink Display SPI]
+        E4[4. Command Handler]
+        E5[5. Watchdog]
+        E1 --> E2 --> E3 --> E4 --> E5
+    end
+
+    INIT --> READY([Ready])
+    READY --> LOOP
+
+    subgraph LOOP["Main Loop"]
+        L1[Serial Listener]
+        L2[Motor Update]
+        L3[Display Update]
+    end
+
+    LOOP --> FRAME[Frame Ready]
+    FRAME --> ROUTER
+
+    subgraph ROUTER["Command Router"]
+        R1["Motion\nMVEL · MSTOP"]
+        R2["Display\nDIMG · DCLEAR · DSTATUS"]
+        R3["System\nSRESET · SHALT · SPING"]
+    end
+
+    ROUTER --> RESP[Send Response via UART]
+    RESP --> READY
+```
+
+### Motor Control State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> IDLE
+
+    IDLE --> PARSING : MVEL received
+    PARSING --> VALIDATE : speeds & duration parsed
+    VALIDATE --> ACCEL : valid
+    VALIDATE --> ERROR_RESP : invalid
+    ERROR_RESP --> IDLE
+
+    ACCEL --> MOVING : PWM ramped up (PID)
+
+    state MOVING {
+        [*] --> RUNNING
+        RUNNING --> TIMER_CHECK
+        TIMER_CHECK --> RUNNING : within duration
+        TIMER_CHECK --> DECEL : duration elapsed
+    }
+
+    MOVING --> DECEL : MSTOP received
+    DECEL --> IDLE : gradual stop complete
+
+    IDLE --> EMERGENCY_STOP : MSTOP / watchdog timeout
+    MOVING --> EMERGENCY_STOP : MSTOP / watchdog timeout
+    EMERGENCY_STOP --> IDLE : speed=0, PWM disabled, OK sent
+```
+
+### Display Update State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> IDLE
+
+    IDLE --> VALIDATE : DIMG received
+    VALIDATE --> STORE_BUFFER : length == 15000
+    VALIDATE --> ERROR_RESP : length ≠ 15000
+    ERROR_RESP --> IDLE
+
+    STORE_BUFFER --> READY : stored in PSRAM
+
+    IDLE --> REFRESH : DCLEAR
+    READY --> REFRESH : display command
+
+    state REFRESH {
+        [*] --> RESET_EPD
+        RESET_EPD --> INIT_CMDS
+        INIT_CMDS --> WRITE_DATA : write 15000 bytes via SPI
+        WRITE_DATA --> TRIGGER_REFRESH
+    }
+
+    REFRESH --> WAIT_DONE
+    WAIT_DONE --> SLEEP_MODE : BUSY pin low (2–4 s)
+    WAIT_DONE --> ERROR_RESP : timeout
+    SLEEP_MODE --> IDLE : sleep cmd 0x10 sent
+```
+
+### Sound Detection & Alarm State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> IDLE
+
+    state IDLE {
+        [*] --> LISTENING
+        LISTENING --> ANALYZING : 1s audio chunk ready
+        ANALYZING --> LISTENING : confidence ≤ 0.8
+        ANALYZING --> CRYING_DETECTED : confidence > 0.8
+    }
+
+    CRYING_DETECTED --> ALARM_ACTIVE : still crying after timer
+    CRYING_DETECTED --> IDLE : crying stopped (cancel)
+
+    state ALARM_ACTIVE {
+        [*] --> PLAY_ALARM
+        PLAY_ALARM --> RECORD_AUDIO : 10s clip
+        RECORD_AUDIO --> NOTIFY : webhook + local log
+    }
+
+    ALARM_ACTIVE --> COOLDOWN : notification sent (30 s cooldown)
+    COOLDOWN --> IDLE : acknowledged / timeout
+```
+
+### LLM Voice Chat Pipeline
+
+```mermaid
+sequenceDiagram
+    participant Mic as USB Microphone
+    participant API as POST /api/llm_chat/local
+    participant ASR as Faster Whisper :8803
+    participant LLM as llama.cpp / Qwen3.5 :8080
+    participant TTS as Piper TTS :8805
+    participant Spk as USB Speaker
+
+    API->>Mic: record WAV (configurable duration)
+    API->>Spk: play "Processing. Please wait."
+    API->>ASR: POST base64 WAV
+    ASR-->>API: transcript text
+    API->>LLM: POST chat messages (streaming, max 100 tokens)
+    LLM-->>API: text response chunks
+    API->>TTS: POST text
+    TTS-->>API: WAV audio bytes
+    API->>Spk: play response audio
+    API-->>API: return LLMChatResult\n(session_id, transcript, text, audio_path, elapsed_ms)
+```

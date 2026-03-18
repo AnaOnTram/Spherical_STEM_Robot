@@ -150,7 +150,6 @@ class LLMChatRequest(BaseModel):
     temperature: float = Field(0.3, ge=0.0, le=2.0)
     play_audio: bool = Field(True, description="Play response audio locally")
     system_prompt: Optional[str] = Field(None, description="Override system prompt")
-    tts_voice: Optional[str] = Field(None, description="TTS voice for cloud provider")
 
 
 class LLMChatResponse(BaseModel):
@@ -697,17 +696,16 @@ def create_app() -> FastAPI:
     # LLM voice chat
     @app.post("/api/llm_chat/local", response_model=LLMChatResponse)
     async def llm_chat_local(request: LLMChatRequest):
-        """Local LFM2.5 voice chat using the USB mic and speaker."""
+        """Spoken conversation: record mic → Whisper ASR → LLM → Piper TTS → speaker."""
         audio_rec = _app_state.get("audio_recorder")
         audio_player = _app_state.get("audio_player")
         if not audio_rec or not audio_rec.is_recording:
             raise HTTPException(status_code=503, detail="Audio recorder not available")
 
         llm_chat = _import_llm_chat()
-        reset_session = llm_chat.reset_session
 
         if request.reset and request.session_id:
-            reset_session(request.session_id)
+            llm_chat.reset_session(request.session_id)
 
         # Record audio to temp WAV
         record_dir = TEMP_AUDIO_DIR / "llm_chat"
@@ -718,88 +716,7 @@ def create_app() -> FastAPI:
         wav_bytes = record_path.read_bytes()
 
         # Play "Processing. Please wait." every 5s until the pipeline finishes.
-        # Both the loop task and the LLM pipeline run concurrently; done_event
-        # signals the loop to stop as soon as a result is ready.
-        llm_chat_pre = _import_llm_chat()
-        processing_path = llm_chat_pre.get_processing_audio_path()
-        done_event = threading.Event()
-
-        if audio_player and processing_path:
-            processing_task = asyncio.create_task(
-                _play_processing_loop(audio_player, processing_path, done_event)
-            )
-        else:
-            processing_task = None
-
-        try:
-            # Check if we should use separate ASR/TTS services or full LFM audio model
-            if getattr(config, 'USE_LOCAL_ASR_TTS', False):
-                # Use separate ASR + LLM + TTS pipeline
-                local_chat_with_separate_asr_tts = llm_chat.local_chat_with_separate_asr_tts
-                result = await asyncio.to_thread(
-                    local_chat_with_separate_asr_tts,
-                    wav_bytes,
-                    request.session_id,
-                    request.reset,
-                    request.max_tokens,
-                    0.3,  # temperature
-                    request.system_prompt,
-                )
-            else:
-                # Use full LFM audio model
-                local_chat_with_audio = llm_chat.local_chat_with_audio
-                result = await asyncio.to_thread(
-                    local_chat_with_audio,
-                    wav_bytes,
-                    request.session_id,
-                    request.reset,
-                    request.max_tokens,
-                    request.system_prompt,
-                )
-        finally:
-            # Stop the processing loop regardless of success or failure
-            done_event.set()
-            if processing_task:
-                await processing_task
-
-        if request.play_audio and result.audio_path and audio_player:
-            audio_player.play_file(result.audio_path)
-
-        return LLMChatResponse(
-            success=True,
-            session_id=result.session_id,
-            text=result.text,
-            transcript=result.transcript,
-            audio_file=result.audio_path,
-            provider=result.provider,
-            elapsed_ms=result.elapsed_ms,
-        )
-
-    @app.post("/api/llm_chat/cloud", response_model=LLMChatResponse)
-    async def llm_chat_cloud(request: LLMChatRequest):
-        """Cloud voice chat via OpenRouter with optional TTS playback."""
-        audio_rec = _app_state.get("audio_recorder")
-        audio_player = _app_state.get("audio_player")
-        if not audio_rec or not audio_rec.is_recording:
-            raise HTTPException(status_code=503, detail="Audio recorder not available")
-
-        llm_chat = _import_llm_chat()
-        cloud_chat_with_audio = llm_chat.cloud_chat_with_audio
-        reset_session = llm_chat.reset_session
-
-        if request.reset and request.session_id:
-            reset_session(request.session_id)
-
-        record_dir = TEMP_AUDIO_DIR / "llm_chat"
-        record_dir.mkdir(exist_ok=True)
-        record_path = record_dir / f"input_{uuid.uuid4().hex}.wav"
-
-        await asyncio.to_thread(audio_rec.record_to_file, str(record_path), request.duration)
-        wav_bytes = record_path.read_bytes()
-
-        # Play "Processing. Please wait." every 5s until the cloud LLM call finishes.
-        llm_chat_pre = _import_llm_chat()
-        processing_path = llm_chat_pre.get_processing_audio_path()
+        processing_path = llm_chat.get_processing_audio_path()
         done_event = threading.Event()
 
         if audio_player and processing_path:
@@ -811,14 +728,13 @@ def create_app() -> FastAPI:
 
         try:
             result = await asyncio.to_thread(
-                cloud_chat_with_audio,
+                llm_chat.oral_chat_with_llm,
                 wav_bytes,
                 request.session_id,
                 request.reset,
-                request.temperature,
                 request.max_tokens,
+                request.temperature,
                 request.system_prompt,
-                request.tts_voice,
             )
         finally:
             done_event.set()

@@ -20,8 +20,7 @@ Devoting in building stories with both wonderful childs and their loving parents
 - [x] Motion Control: Remote control of dual motors.[^2]
 - [x] Display Updates: Rendering the 4.2” e-ink through either upload image (400*300) or input text (string).[^2]
 - [x] Sound Detection: Background sound-inference for crying detection. 
-- [x] Local LLM Conversation: ASR + TTS, backboned by [LiquidAI/LFM2.5-Audio-1.5B](https://huggingface.co/LiquidAI/LFM2.5-Audio-1.5B)
-- [x] Cloud-based natural language STEM Education: Learning STEM related knowledge through having natural conversation with GPT.  
+- [x] Local LLM Conversation: ASR (fast Whisper) --> LLM Inference (llama.cpp Qwen3.5 0.9B) --> TTS (piper). Inspired by <i>[PiSugar/whisplay-ai-chatbot](https://github.com/PiSugar/whisplay-ai-chatbot.git) </i> project.
 - [x] API call: Setted up [API](API.md) server for front-end UI/UX development.
 - [x] Gesture Dection: Using Google's mediapipe library, the solution detects numbers of fingers shown in the camera as input for STEM content interaction. 
 - [x] Education Content: Eight demonstrative question that can be shuffled.
@@ -43,15 +42,20 @@ pip install -r requirements.txt
 * Compile the [ESP32 sketch](/esp32/esp32_firmware/esp32_firmware.ino) using Arduino IDE.
 * Connect ESP32, USB Cam, and USB sound card to the Pi5
 * Start the program
-* Set the keys if you would like to use the cloud inference service.[^3]
+~~* Set the keys if you would like to use the cloud inference service.[^3]~~
 ```bash
-export INTERMEDIATE_SERVER_AUTH=[your-authentication-key]
+export INTERMEDIATE_SERVER_AUTH=[your-authentication-key] # for legacy function that no longer support
 ```
 * Start the service
 ```bash
 python main.py
 ```
 * You may use another host machine to check the status using the [sample debugging webface](debug/index_alt.html)
+
+## Front-end UI/UX
+> __<i>This repo only contains back-end solutions with simple debugging pannel.</i>__
+
+For front-end, please check [Xd06eR/wonderball-app](https://github.com/Xd06eR/wonderball-app) designed by Pan Wong.
 
 ## Notes
 
@@ -60,5 +64,5 @@ python main.py
 [^2]: Implemented via ESP32  
   ESP32 is connected to Raspberry Pi 5 through USB serial (appears as `/dev/ttyACM0` on Pi 5)
 
-[^3]: The current cloud inference service adopts a self-hosted API transfer node (VPN-liked) as GPT/Gemini are currently unavailable in Hong Kong. You may directly use the OpenAI API platform or use 3rd party platform like openrouter.
+[^3]: ~~The current cloud inference service adopts a self-hosted API transfer node (VPN-liked) as GPT/Gemini are currently unavailable in Hong Kong. You may directly use the OpenAI API platform or use 3rd party platform like openrouter.~~
 

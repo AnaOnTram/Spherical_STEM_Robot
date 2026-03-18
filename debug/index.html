@@ -842,7 +842,7 @@
                     <!-- Step 1: Record Audio -->
                     <div style="background-color: var(--md-sys-color-surface-variant); border-radius: var(--md-sys-shape-corner-medium); padding: 16px; margin-bottom: 16px;">
                         <div style="font-size: 14px; font-weight: 500; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
-                            <span style="background-color: var(--md-sys-color-primary); color: white; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px;">2</span>
+                            <span style="background-color: var(--md-sys-color-primary); color: white; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px;">1</span>
                             Record Audio
                             <span id="recordingStatus" style="margin-left: auto; font-size: 12px; padding: 4px 8px; border-radius: 12px; background-color: var(--md-sys-color-surface-variant); color: var(--md-sys-color-on-surface-variant);">Idle</span>
                         </div>
@@ -898,13 +898,9 @@
                             </label>
                         </div>
                         <div style="display: flex; gap: 8px;">
-                            <button class="btn btn-filled" id="sendLocalBtn" onclick="sendToLlm('local')" style="flex: 1;">
+                            <button class="btn btn-filled" id="sendLocalBtn" onclick="sendToLlm()" style="flex: 1;">
                                 <span class="material-icons">send</span>
-                                Send (Local)
-                            </button>
-                            <button class="btn btn-tonal" id="sendCloudBtn" onclick="sendToLlm('cloud')" style="flex: 1;">
-                                <span class="material-icons">cloud</span>
-                                Send (Cloud)
+                                Send to LLM
                             </button>
                         </div>
                     </div>
@@ -1693,69 +1689,6 @@
         let recordedAudioBlob = null;
         let isRecording = false;
 
-        async function checkServerStatus() {
-            if (!apiBase) {
-                showSnackbar('Not connected');
-                return;
-            }
-            
-            log('Checking LLM server status...');
-            try {
-                const result = await apiCall('/api/llm_chat/local', 'POST', { duration: 0.1 });
-                if (result && result.success) {
-                    document.getElementById('serverStatusBadge').textContent = 'Running';
-                    document.getElementById('serverStatusBadge').style.backgroundColor = '#4CAF50';
-                    document.getElementById('serverStatusBadge').style.color = 'white';
-                    log('Server is running');
-                    return true;
-                }
-            } catch (e) {
-                // Server not running
-            }
-            
-            document.getElementById('serverStatusBadge').textContent = 'Stopped';
-            document.getElementById('serverStatusBadge').style.backgroundColor = 'var(--md-sys-color-error-container)';
-            document.getElementById('serverStatusBadge').style.color = 'var(--md-sys-color-on-error-container)';
-            log('Server is not running');
-            return false;
-        }
-
-        async function startLlmServer() {
-            if (!apiBase) {
-                showSnackbar('Not connected');
-                return;
-            }
-            
-            document.getElementById('startServerBtn').disabled = true;
-            document.getElementById('serverStatusBadge').textContent = 'Starting...';
-            log('Starting local LFM2.5 server...');
-            
-            try {
-                // Send minimal request to trigger server startup
-                const result = await apiCall('/api/llm_chat/local', 'POST', { 
-                    duration: 0.5,
-                    session_id: null,
-                    reset: true
-                });
-                
-                if (result && result.success) {
-                    document.getElementById('serverStatusBadge').textContent = 'Running';
-                    document.getElementById('serverStatusBadge').style.backgroundColor = '#4CAF50';
-                    document.getElementById('serverStatusBadge').style.color = 'white';
-                    log('Server started successfully');
-                    showSnackbar('Server started');
-                } else {
-                    throw new Error('Server failed to start');
-                }
-            } catch (err) {
-                log(`Server start error: ${err.message}`, 'error');
-                document.getElementById('serverStatusBadge').textContent = 'Error';
-                showSnackbar('Failed to start server');
-            } finally {
-                document.getElementById('startServerBtn').disabled = false;
-            }
-        }
-
         async function recordAudioForLLM() {
             if (!apiBase) {
                 showSnackbar('Not connected');
@@ -1795,7 +1728,7 @@
             log('Recording cancelled');
         }
 
-        async function sendToLlm(provider) {
+        async function sendToLlm() {
             if (!apiBase) {
                 showSnackbar('Not connected');
                 return;
@@ -1804,13 +1737,13 @@
                 showSnackbar('LLM processing...');
                 return;
             }
-            
+
             // Check if user clicked "Record" first
             if (!recordedAudioBlob) {
                 showSnackbar('Please click "Record" first to prepare audio recording');
                 return;
             }
-            
+
             const duration = parseFloat(document.getElementById('llmDuration').value) || 4;
             const sessionIdInput = document.getElementById('llmSessionId').value.trim();
             const maxTokens = parseInt(document.getElementById('llmMaxTokens').value, 10) || 512;
@@ -1829,7 +1762,6 @@
 
             llmBusy = true;
             document.getElementById('sendLocalBtn').disabled = true;
-            document.getElementById('sendCloudBtn').disabled = true;
             document.getElementById('recordingStatus').textContent = 'Recording...';
             document.getElementById('recordingStatus').style.backgroundColor = '#FF5722';
             document.getElementById('audioPreview').textContent = `Recording ${duration}s audio on Pi...`;
@@ -1837,11 +1769,10 @@
             document.getElementById('llmResponse').textContent = 'Waiting...';
             document.getElementById('llmMeta').textContent = '--';
 
-            const endpoint = provider === 'cloud' ? '/api/llm_chat/cloud' : '/api/llm_chat/local';
-            log(`Starting ${duration}s recording and sending to ${provider} LLM...`);
+            log(`Starting ${duration}s recording → Whisper ASR → LLM → Piper TTS...`);
 
             try {
-                const result = await apiCall(endpoint, 'POST', payload);
+                const result = await apiCall('/api/llm_chat/local', 'POST', payload);
                 if (!result || !result.success) {
                     throw new Error('LLM request failed');
                 }
@@ -1858,7 +1789,7 @@
                 document.getElementById('recordingStatus').style.backgroundColor = '#4CAF50';
                 showSnackbar('LLM response received');
                 log(`LLM response: ${result.text.substring(0, 50)}...`);
-                
+
                 // Reset for next recording
                 recordedAudioBlob = null;
                 isRecording = false;
@@ -1876,7 +1807,6 @@
             } finally {
                 llmBusy = false;
                 document.getElementById('sendLocalBtn').disabled = false;
-                document.getElementById('sendCloudBtn').disabled = false;
             }
         }
         

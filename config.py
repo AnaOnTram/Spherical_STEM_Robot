@@ -84,15 +84,13 @@ API_PORT = 8000
 MOTOR_SPEED_MIN = -255
 MOTOR_SPEED_MAX = 255
 
-# LLM Chat (Local LFM2.5)
+# LLM Chat (local llama.cpp server)
 LLM_CHAT_LOCAL_BASE_URL = os.getenv(
     "LLM_CHAT_LOCAL_BASE_URL", "http://127.0.0.1:8080/v1"
 )
 LLM_CHAT_LOCAL_MODEL = os.getenv("LLM_CHAT_LOCAL_MODEL", "")
-LLM_CHAT_LOCAL_SAMPLE_RATE = 24000
-LLM_CHAT_LOCAL_SYSTEM_PROMPT = "Respond with interleaved text and audio."
 
-# System prompt for text-only model (used with separate ASR/TTS pipeline)
+# System prompt for the local LLM
 # Tuned for Qwen3-1.7B: small model benefits from explicit role, hard length cap,
 # a concrete answer pattern, and /no_think to suppress chain-of-thought overhead.
 LLM_CHAT_TEXT_SYSTEM_PROMPT = os.getenv(
@@ -105,71 +103,22 @@ LLM_CHAT_TEXT_SYSTEM_PROMPT = os.getenv(
 )
 LLM_CHAT_SESSION_MAX_MESSAGES = int(os.getenv("LLM_CHAT_SESSION_MAX_MESSAGES", "20"))
 
-# Auto-start local LFM2.5 server on first request
-# Set to False if you want to start the server manually
+# Auto-start the llama.cpp server on first request.
+# Set to False if you prefer to start the server manually.
 LLM_CHAT_LOCAL_AUTO_START = os.getenv("LLM_CHAT_LOCAL_AUTO_START", "true").lower() in (
     "true",
     "1",
     "yes",
 )
 
-# LFM2.5 model paths (for local server helpers/scripts)
-_DEFAULT_LFM_MODEL_DIR = "/home/admin/model"
-
-LFM_MODEL_DIR = os.getenv("LFM_MODEL_DIR", _DEFAULT_LFM_MODEL_DIR)
-
-# Audio model (for full LFM audio pipeline with built-in ASR/TTS)
-LFM_AUDIO_MODEL_PATH = os.getenv(
-    "LFM_AUDIO_MODEL_PATH", f"{LFM_MODEL_DIR}/LFM2.5-Audio-1.5B-Q4_0.gguf"
-)
-LFM_MMPROJ_PATH = os.getenv(
-    "LFM_MMPROJ_PATH", f"{LFM_MODEL_DIR}/mmproj-LFM2.5-Audio-1.5B-Q4_0.gguf"
-)
-LFM_TOKENIZER_PATH = os.getenv(
-    "LFM_TOKENIZER_PATH", f"{LFM_MODEL_DIR}/tokenizer-LFM2.5-Audio-1.5B-Q4_0.gguf"
-)
-LFM_VOCODER_PATH = os.getenv(
-    "LFM_VOCODER_PATH", f"{LFM_MODEL_DIR}/vocoder-LFM2.5-Audio-1.5B-Q4_0.gguf"
-)
-
-# Text-only model (for separate ASR/TTS pipeline)
-# When USE_LOCAL_ASR_TTS is True, this text-only model is used instead of the audio model
-# Using the Gemma 1B model for faster inference on Pi
+# Text model path (Qwen3.5 or compatible GGUF)
+_DEFAULT_MODEL_DIR = "/home/admin/model"
+LFM_MODEL_DIR = os.getenv("LFM_MODEL_DIR", _DEFAULT_MODEL_DIR)
 LFM_TEXT_MODEL_PATH = os.getenv(
     "LFM_TEXT_MODEL_PATH", f"{LFM_MODEL_DIR}/Qwen3.5-0.8B-UD-K4_K_XL.gguf"
 )
 
-# Legacy compatibility - points to audio model by default
-LFM_MODEL_PATH = LFM_AUDIO_MODEL_PATH
-
-# LLM Chat (OpenRouter via Intermediate Server)
-# Intermediate server at http://162.141.92.169:3000
-# INTERMEDIATE_SERVER_AUTH: Custom auth key for intermediate server (NOT the OpenRouter API key)
-INTERMEDIATE_SERVER_AUTH = os.getenv("INTERMEDIATE_SERVER_AUTH")
-OPENROUTER_API_KEY = os.getenv(
-    "OPENROUTER_API_KEY"
-)  # Real OpenRouter API key (used by intermediate server)
-OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "http://162.141.92.169:3000/v1")
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-audio")
-OPENROUTER_SITE_URL = os.getenv("OPENROUTER_SITE_URL")
-OPENROUTER_APP_NAME = os.getenv("OPENROUTER_APP_NAME", "Spherical Robot")
-OPENROUTER_MAX_TOKENS = int(os.getenv("OPENROUTER_MAX_TOKENS", "512"))
-OPENROUTER_TEMPERATURE = float(os.getenv("OPENROUTER_TEMPERATURE", "0.3"))
-
-# Cloud TTS (used after OpenRouter text response)
-CLOUD_TTS_PROVIDER = os.getenv("CLOUD_TTS_PROVIDER", "openai")  # openai|none
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OPENAI_TTS_MODEL = os.getenv("OPENAI_TTS_MODEL", "openai/gpt-audio")
-OPENAI_TTS_VOICE = os.getenv("OPENAI_TTS_VOICE", "alloy")
-OPENAI_TTS_FORMAT = os.getenv("OPENAI_TTS_FORMAT", "wav")
-
-# Local ASR + TTS Services (Alternative to full LFM audio model)
-# Always enabled by default for better performance on Pi
-USE_LOCAL_ASR_TTS = os.getenv("USE_LOCAL_ASR_TTS", "true").lower() in (
-    "true",
-    "1",
-    "yes",
-)
+# Local ASR + TTS Service URLs
 LOCAL_ASR_URL = os.getenv(
     "LOCAL_ASR_URL", "http://127.0.0.1:8803/recognize"
 )  # Faster Whisper
