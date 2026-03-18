@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 import config
+from api.websocket import ws_manager
 
 logger = logging.getLogger(__name__)
 
@@ -1050,5 +1051,49 @@ def create_app() -> FastAPI:
         await engine.stop()
         _quiz_state["engine"] = None
         return {"success": True, "message": "Quiz stopped"}
+
+    # -----------------------------------------------------------------------
+    # WebSocket endpoints
+    # -----------------------------------------------------------------------
+
+    @app.websocket("/ws")
+    async def websocket_endpoint(websocket: WebSocket):
+        """Event WebSocket — subscribe to real-time robot events."""
+        await ws_manager.handle_connection(websocket)
+
+    @app.websocket("/ws/audio")
+    async def websocket_audio(websocket: WebSocket):
+        """Audio WebSocket — streams raw 16-bit mono PCM.
+
+        Connection flow:
+          1. Server sends a JSON ``audio_config`` message.
+          2. Server sends binary Int16 PCM chunks continuously.
+        """
+        import json as _json
+        try:
+            await websocket.accept()
+        except Exception:
+            return
+
+        audio_rec = _app_state.get("audio_recorder")
+        if not audio_rec or not audio_rec.is_recording:
+            await websocket.send_text(_json.dumps({"error": "Audio not available"}))
+            await websocket.close()
+            return
+
+        await websocket.send_text(_json.dumps({
+            "type": "audio_config",
+            "sample_rate": audio_rec.sample_rate,
+            "channels": 1,
+            "format": "int16",
+        }))
+
+        try:
+            while True:
+                chunk = await asyncio.to_thread(audio_rec.get_audio, 0.5)
+                if chunk is not None:
+                    await websocket.send_bytes(chunk.tobytes())
+        except Exception:
+            pass
 
     return app

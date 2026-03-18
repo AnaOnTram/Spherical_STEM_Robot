@@ -42,17 +42,23 @@ GET /api/status
   "connected": true,
   "esp32_status": "connected",
   "video_running": true,
-  "audio_running": true
+  "audio_running": true,
+  "alarm_state": "idle"
 }
 ```
+`alarm_state` values: `idle`, `detecting`, `confirmed`, `alarming`, `cooldown`, `disabled`
 
 ### Ping ESP32
 ```
 POST /api/system/ping
 ```
-**Response:**
+**Response (success):**
 ```json
 {"success": true, "message": "pong"}
+```
+**Response (no reply from ESP32):**
+```json
+{"success": false, "message": "no response"}
 ```
 
 ### Reset ESP32
@@ -249,6 +255,25 @@ GET /api/audio/playback-status
 }
 ```
 
+### Get Audio System Status
+```
+GET /api/audio/status
+```
+Returns detailed audio recorder configuration.
+
+**Response:**
+```json
+{
+  "available": true,
+  "recording": true,
+  "sample_rate": 48000,
+  "channels": 2,
+  "noise_reduction": true,
+  "dual_mic": false
+}
+```
+When no audio recorder is initialised: `{"available": false}`
+
 ---
 
 ## LLM Voice Chat
@@ -310,7 +335,7 @@ Pipeline: **Faster Whisper** (ASR, port 8803) → **llama.cpp / Qwen3.5** (LLM, 
 | text | string | LLM text response |
 | transcript | string\|null | ASR transcript of the user's speech |
 | audio_file | string\|null | Path to synthesized WAV file on the robot (null if TTS unavailable) |
-| provider | string | Always `"local-asr-llm-tts"` |
+| provider | string | Provider identifier returned by the LLM service (e.g. `"local-asr-llm-tts"`) |
 | elapsed_ms | int | Total pipeline duration in milliseconds |
 
 ---
@@ -407,6 +432,34 @@ GET /api/quiz/status
 }
 ```
 
+### Inject Gesture Answer (Testing)
+```
+POST /api/quiz/gesture
+Content-Type: application/json
+```
+Manually injects a finger-count answer into the active quiz session.
+Useful for testing without a physical camera.
+
+**Request Body:**
+```json
+{"finger_count": 2}
+```
+| Field | Type | Range | Description |
+|-------|------|-------|-------------|
+| finger_count | int | 1–4 | 1=A, 2=B, 3=C, 4=D |
+
+**Response:**
+```json
+{
+  "success": true,
+  "handled": true,
+  "message": "Gesture processed"
+}
+```
+`handled` is `false` when the quiz is not currently waiting for an answer.
+
+**Error (no active quiz):** HTTP 404
+
 ### Stop Hand-Gesture Quiz
 ```
 POST /api/quiz/stop
@@ -493,6 +546,33 @@ POST /api/display/clear
 **Response:**
 ```json
 {"success": true, "message": "Display cleared"}
+```
+
+### Display Lesson Card (MCQ)
+```
+POST /api/display/lesson
+Content-Type: application/json
+```
+Renders a structured multiple-choice question card on the E-Ink display.
+Emojis in option strings are stripped server-side; CJK characters are supported.
+
+**Request Body:**
+```json
+{
+  "question": "What force keeps planets in orbit around the Sun?",
+  "options": ["Magnetism", "Gravity", "Friction", "Pressure"],
+  "title": "WonderBall STEM"
+}
+```
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| question | string | yes | Question text |
+| options | array | yes | Exactly 4 answer choices |
+| title | string | no | Header text (default: `"WonderBall STEM"`, max 40 chars) |
+
+**Response:**
+```json
+{"success": true, "message": "Lesson displayed"}
 ```
 
 ---
@@ -652,14 +732,22 @@ POST /api/alarm/webhook?url=https://your-api.com/alerts
 **Query Parameters:**
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| url | string | Webhook URL for notifications (empty to clear) |
+| url | string | Webhook URL for notifications. Pass an empty string to clear. |
 
-**Response:**
+**Response (URL set):**
 ```json
 {
   "success": true,
   "message": "Webhook set",
   "url": "https://your-api.com/alerts"
+}
+```
+**Response (URL cleared):**
+```json
+{
+  "success": true,
+  "message": "Webhook cleared",
+  "url": null
 }
 ```
 
@@ -686,12 +774,11 @@ WebSocket: ws://<ip>:8000/ws
 | Type | Description | Data Fields |
 |------|-------------|-------------|
 | `connected` | Client connected | `message` |
-| `gesture_detected` | Hand gesture detected | `gesture`, `confidence`, `handedness` |
+| `gesture_detected` | Hand gesture detected | `gesture`, `confidence`, `handedness`, `finger_count` |
 | `person_detected` | Person tracked | `id`, `bbox`, `confidence` |
 | `sound_detected` | Sound classified | `category`, `confidence`, `class_name` |
+| `alarm_triggered` | Alarm triggered | `state`, `duration`, `audio_file` |
 | `movement_update` | Motor state changed | `left_speed`, `right_speed`, `status` |
-| `ALARM_TRIGGERED` | Alarm triggered | `state`, `duration`, `audio_file` |
-| `SOUND_DETECTED` | Sound detected | `category`, `confidence` |
 
 **Subscribe to Events:**
 ```json
