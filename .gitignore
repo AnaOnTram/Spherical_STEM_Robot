@@ -16,8 +16,7 @@ build/
 *.key
 
 # LLM Chat local server and models (large binary files)
-LLM_Chat/server/
-LLM_Chat/models/
+LLM_Chat/
 
 # Logs
 *.log
