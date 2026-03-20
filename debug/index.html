@@ -1378,14 +1378,28 @@
         // Video
         let videoStream = null;
         
-        function startVideo() {
+        async function startVideo() {
             const container = document.getElementById('videoContainer');
+            
+            // Get stream info to set correct aspect ratio
+            try {
+                const info = await apiCall('/api/stream/info');
+                if (info) {
+                    const aspectRatio = `${info.width}/${info.height}`;
+                    container.style.aspectRatio = aspectRatio;
+                    log(`Video dimensions: ${info.width}×${info.height} (${info.rotation_degrees}° rotation)`);
+                }
+            } catch (error) {
+                log('Using default aspect ratio', 'warning');
+            }
+            
             container.innerHTML = `<img src="http://${apiBase}/api/stream/video" style="width: 100%; height: 100%; object-fit: contain;">`;
             log('Video stream started');
         }
         
         function stopVideo() {
             const container = document.getElementById('videoContainer');
+            container.style.aspectRatio = '4/3';  // Reset to default
             container.innerHTML = `
                 <div class="video-placeholder">
                     <span class="material-icons" style="font-size: 48px; opacity: 0.5;">videocam_off</span>
@@ -1411,40 +1425,50 @@
         // Audio
         let audioContext = null;
         let audioGainNode = null;
-        
+        let audioNextStartTime = 0;
+        let audioSampleRate = 48000;
+
         async function startAudio() {
             if (!audioContext) {
-                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                audioContext = new (window.AudioContext || window.webkitAudioContext)({sampleRate: 48000});
                 audioGainNode = audioContext.createGain();
                 audioGainNode.connect(audioContext.destination);
             }
-            
+            audioNextStartTime = 0;
+
             const wsUrl = `ws://${apiBase}/ws/audio`;
             audioWs = new WebSocket(wsUrl);
             audioWs.binaryType = 'arraybuffer';
-            
+
             audioWs.onmessage = async (event) => {
                 if (typeof event.data === 'string') {
                     // Config message
                     const msg = JSON.parse(event.data);
                     if (msg.type === 'audio_config') {
-                        log(`Audio: ${msg.sample_rate}Hz`);
+                        audioSampleRate = msg.sample_rate;
+                        log(`Audio: ${audioSampleRate}Hz`);
                     }
                 } else {
-                    // Audio data
+                    // Audio data — schedule sequentially to avoid overlap noise
                     const int16Array = new Int16Array(event.data);
                     const float32Array = new Float32Array(int16Array.length);
                     for (let i = 0; i < int16Array.length; i++) {
                         float32Array[i] = int16Array[i] / 32768.0;
                     }
-                    
-                    const audioBuffer = audioContext.createBuffer(1, float32Array.length, 48000);
+
+                    const audioBuffer = audioContext.createBuffer(1, float32Array.length, audioSampleRate);
                     audioBuffer.getChannelData(0).set(float32Array);
-                    
+
                     const source = audioContext.createBufferSource();
                     source.buffer = audioBuffer;
                     source.connect(audioGainNode);
-                    source.start();
+
+                    // Schedule chunk immediately after the previous one ends.
+                    // If we've fallen behind (e.g. tab was backgrounded), reset to now.
+                    const now = audioContext.currentTime;
+                    if (audioNextStartTime < now) audioNextStartTime = now + 0.05;
+                    source.start(audioNextStartTime);
+                    audioNextStartTime += audioBuffer.duration;
                 }
             };
             
@@ -1457,6 +1481,7 @@
                 audioWs.close();
                 audioWs = null;
             }
+            audioNextStartTime = 0;
             document.getElementById('audioStatus').textContent = 'Audio stream stopped';
             log('Audio stream stopped');
         }

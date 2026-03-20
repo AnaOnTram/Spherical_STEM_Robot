@@ -299,10 +299,18 @@ class VideoEncoder:
 
     @property
     def frame_size(self) -> tuple[int, int]:
-        """Get frame size (width, height)."""
+        """Get frame size (width, height) after rotation."""
+        rotation = int(self.config.rotation_degrees) % 360
+
         if self._capture:
-            return (
-                int(self._capture.get(cv2.CAP_PROP_FRAME_WIDTH)),
-                int(self._capture.get(cv2.CAP_PROP_FRAME_HEIGHT)),
-            )
+            width = int(self._capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(self._capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            # Swap dimensions for 90° and 270° rotations
+            if rotation in (90, 270):
+                return (height, width)
+            return (width, height)
+
+        # Swap config dimensions if needed
+        if rotation in (90, 270):
+            return (self.config.height, self.config.width)
         return (self.config.width, self.config.height)

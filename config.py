@@ -2,6 +2,7 @@
 
 import os
 import platform
+from pathlib import Path
 
 # Serial Communication
 # For Raspberry Pi 5, use /dev/ttyAMA0 (UART0) or /dev/serial0
@@ -26,7 +27,7 @@ CAMERA_HEIGHT = 480
 CAMERA_FPS = 30
 # Camera image rotation in degrees (clockwise): 0, 90, 180, 270
 # Useful when camera mounting orientation is not fixed yet.
-CAMERA_ROTATION_DEGREES = 0
+CAMERA_ROTATION_DEGREES = 90
 
 # Audio (USB Audio Device)
 # Run `arecord -l` and `aplay -l` to find correct card numbers
@@ -112,10 +113,11 @@ LLM_CHAT_LOCAL_AUTO_START = os.getenv("LLM_CHAT_LOCAL_AUTO_START", "true").lower
 )
 
 # Text model path (Qwen3.5 or compatible GGUF)
-_DEFAULT_MODEL_DIR = "/home/admin/model"
+_REPO_ROOT = Path(__file__).parent
+_DEFAULT_MODEL_DIR = str(_REPO_ROOT / "LLM_Chat" / "models" / "text_model")
 LFM_MODEL_DIR = os.getenv("LFM_MODEL_DIR", _DEFAULT_MODEL_DIR)
 LFM_TEXT_MODEL_PATH = os.getenv(
-    "LFM_TEXT_MODEL_PATH", f"{LFM_MODEL_DIR}/Qwen3.5-0.8B-UD-K4_K_XL.gguf"
+    "LFM_TEXT_MODEL_PATH", f"{LFM_MODEL_DIR}/Qwen3.5-0.8B-UD-Q4_K_XL.gguf"
 )
 
 # Local ASR + TTS Service URLs

@@ -1,4 +1,5 @@
 """FastAPI routes for robot control."""
+
 import asyncio
 import logging
 import os
@@ -28,7 +29,9 @@ TEMP_AUDIO_DIR.mkdir(exist_ok=True)
 _PROCESSING_INTERVAL = 5.0  # seconds between each "Processing. Please wait." repeat
 
 
-async def _play_processing_loop(audio_player, processing_path: str, done: threading.Event) -> None:
+async def _play_processing_loop(
+    audio_player, processing_path: str, done: threading.Event
+) -> None:
     """Play 'Processing. Please wait.' repeatedly every 5 s until done is set.
 
     Runs as an asyncio task concurrent with the LLM pipeline task.
@@ -40,7 +43,9 @@ async def _play_processing_loop(audio_player, processing_path: str, done: thread
         # Wait up to _PROCESSING_INTERVAL seconds, but wake immediately if done
         try:
             await asyncio.wait_for(
-                asyncio.get_event_loop().run_in_executor(None, done.wait, _PROCESSING_INTERVAL),
+                asyncio.get_event_loop().run_in_executor(
+                    None, done.wait, _PROCESSING_INTERVAL
+                ),
                 timeout=_PROCESSING_INTERVAL + 0.1,
             )
         except asyncio.TimeoutError:
@@ -69,19 +74,24 @@ def _import_llm_chat():
 # Request/Response models
 class MovementRequest(BaseModel):
     """Motor movement request."""
+
     left_speed: int = Field(..., ge=-255, le=255, description="Left motor speed")
     right_speed: int = Field(..., ge=-255, le=255, description="Right motor speed")
-    duration_ms: int = Field(0, ge=0, le=65535, description="Duration in ms (0=indefinite)")
+    duration_ms: int = Field(
+        0, ge=0, le=65535, description="Duration in ms (0=indefinite)"
+    )
 
 
 class MovementResponse(BaseModel):
     """Motor movement response."""
+
     success: bool
     message: str
 
 
 class DisplayImageRequest(BaseModel):
     """Display image request."""
+
     image_base64: Optional[str] = None
     text: Optional[str] = None
     pattern: Optional[str] = None  # "checkerboard", "gradient", "border"
@@ -89,6 +99,7 @@ class DisplayImageRequest(BaseModel):
 
 class DisplayLessonRequest(BaseModel):
     """Structured MCQ lesson display request."""
+
     question: str = Field(..., min_length=1)
     options: List[str] = Field(..., min_length=4, max_length=4)
     title: str = Field("WonderBall STEM", max_length=40)
@@ -96,12 +107,14 @@ class DisplayLessonRequest(BaseModel):
 
 class DisplayResponse(BaseModel):
     """Display operation response."""
+
     success: bool
     message: str
 
 
 class StatusResponse(BaseModel):
     """System status response."""
+
     connected: bool
     esp32_status: str
     video_running: bool
@@ -111,6 +124,7 @@ class StatusResponse(BaseModel):
 
 class AlarmSettingsRequest(BaseModel):
     """Alarm settings request."""
+
     enabled: bool = True
     threshold: float = Field(0.8, ge=0.0, le=1.0)
     detection_duration: float = Field(3.0, ge=1.0, le=30.0)
@@ -118,12 +132,14 @@ class AlarmSettingsRequest(BaseModel):
 
 class TTSSpeakRequest(BaseModel):
     """Text-to-speech request."""
+
     text: str = Field(..., min_length=1, description="Text to synthesise")
     voice: str = Field("zh-HK-HiuGaaiNeural", description="Edge TTS voice name")
 
 
 class QuizStartRequest(BaseModel):
     """Start a quiz session."""
+
     questions: Optional[List[dict]] = Field(
         None,
         description=(
@@ -134,18 +150,28 @@ class QuizStartRequest(BaseModel):
     )
     voice: str = Field("en-US-AriaNeural", description="Edge TTS voice for quiz")
     shuffle: bool = Field(False, description="Randomise question order")
-    result_delay: float = Field(2.5, ge=0.5, le=10.0, description="Seconds to pause after each answer")
+    result_delay: float = Field(
+        2.5, ge=0.5, le=10.0, description="Seconds to pause after each answer"
+    )
 
 
 class QuizGestureRequest(BaseModel):
     """Manually inject a finger-count answer (for testing without a camera)."""
-    finger_count: int = Field(..., ge=1, le=4, description="Number of fingers held up: 1=A, 2=B, 3=C, 4=D")
+
+    finger_count: int = Field(
+        ..., ge=1, le=4, description="Number of fingers held up: 1=A, 2=B, 3=C, 4=D"
+    )
 
 
 class LLMChatRequest(BaseModel):
     """LLM voice chat request."""
-    duration: float = Field(4.0, ge=0.5, le=30.0, description="Recording duration in seconds")
-    session_id: Optional[str] = Field(None, description="Session id for multi-turn chat")
+
+    duration: float = Field(
+        4.0, ge=0.5, le=30.0, description="Recording duration in seconds"
+    )
+    session_id: Optional[str] = Field(
+        None, description="Session id for multi-turn chat"
+    )
     reset: bool = Field(False, description="Reset session context")
     max_tokens: int = Field(512, ge=16, le=2048)
     temperature: float = Field(0.3, ge=0.0, le=2.0)
@@ -155,6 +181,7 @@ class LLMChatRequest(BaseModel):
 
 class LLMChatResponse(BaseModel):
     """LLM voice chat response."""
+
     success: bool
     session_id: str
     text: str
@@ -203,16 +230,19 @@ def update_gesture_state(
 ) -> None:
     """Called by the detection loop to publish the latest gesture result."""
     from datetime import datetime
-    _gesture_state.update({
-        "gesture": gesture,
-        "confidence": confidence,
-        "handedness": handedness,
-        "finger_count": finger_count,
-        "finger_states": finger_states,
-        "landmarks": landmarks,
-        "hand_up": hand_up,
-        "timestamp": datetime.now().isoformat(),
-    })
+
+    _gesture_state.update(
+        {
+            "gesture": gesture,
+            "confidence": confidence,
+            "handedness": handedness,
+            "finger_count": finger_count,
+            "finger_states": finger_states,
+            "landmarks": landmarks,
+            "hand_up": hand_up,
+            "timestamp": datetime.now().isoformat(),
+        }
+    )
 
 
 def set_app_state(**kwargs) -> None:
@@ -272,7 +302,9 @@ def create_app() -> FastAPI:
 
         return StatusResponse(
             connected=serial_mgr.is_connected if serial_mgr else False,
-            esp32_status="connected" if serial_mgr and serial_mgr.ping() else "disconnected",
+            esp32_status="connected"
+            if serial_mgr and serial_mgr.ping()
+            else "disconnected",
             video_running=video_enc.is_running if video_enc else False,
             audio_running=audio_rec.is_recording if audio_rec else False,
             alarm_state=alarm_mgr.state.value if alarm_mgr else "disabled",
@@ -339,7 +371,7 @@ def create_app() -> FastAPI:
                 # 1. Raw binary 1-bit packed data (from frontend dithering)
                 # 2. Base64 encoded image file (PNG/JPG)
                 image_bytes = base64.b64decode(request.image_base64)
-                
+
                 # Check if it's already the correct size (15000 bytes = pre-processed)
                 if len(image_bytes) == 15000:
                     # Already processed 1-bit packed data
@@ -350,12 +382,15 @@ def create_app() -> FastAPI:
                     try:
                         from io import BytesIO
                         from PIL import Image
+
                         img = Image.open(BytesIO(image_bytes))
                         packed = img_processor.process(img)
                         logger.info(f"Processed image file: {len(packed)} bytes")
                     except Exception as img_err:
                         logger.error(f"Failed to open as image: {img_err}")
-                        raise HTTPException(status_code=400, detail=f"Invalid image data: {img_err}")
+                        raise HTTPException(
+                            status_code=400, detail=f"Invalid image data: {img_err}"
+                        )
             elif request.text:
                 packed = img_processor.process_text(request.text)
             elif request.pattern:
@@ -436,43 +471,44 @@ def create_app() -> FastAPI:
             """Async wrapper for MJPEG stream to prevent blocking."""
             import asyncio
             from concurrent.futures import ThreadPoolExecutor
-            
+
             loop = asyncio.get_event_loop()
             executor = ThreadPoolExecutor(max_workers=1)
-            
+
             # Use thread pool to prevent blocking the event loop
             iterator = await loop.run_in_executor(
-                executor, 
-                lambda: iter(video_enc.generate_mjpeg_stream(quality=70))
+                executor, lambda: iter(video_enc.generate_mjpeg_stream(quality=70))
             )
-            
+
             frame_count = 0
             last_yield_time = loop.time()
             target_fps = 15  # Target 15 FPS for smooth streaming
             frame_interval = 1.0 / target_fps
-            
+
             while True:
                 try:
                     # Get next frame in thread pool
-                    jpeg_bytes = await loop.run_in_executor(executor, next, iterator, None)
+                    jpeg_bytes = await loop.run_in_executor(
+                        executor, next, iterator, None
+                    )
                     if jpeg_bytes is None:
                         break
-                    
+
                     frame_count += 1
                     current_time = loop.time()
                     elapsed = current_time - last_yield_time
-                    
+
                     # Yield frame
                     yield jpeg_bytes
                     last_yield_time = loop.time()
-                    
+
                     # Adaptive delay: if we're ahead of schedule, yield control
                     if elapsed < frame_interval:
                         await asyncio.sleep(0.001)
                     else:
                         # We're behind, just yield briefly
                         await asyncio.sleep(0)
-                        
+
                 except StopIteration:
                     break
                 except Exception as e:
@@ -498,6 +534,23 @@ def create_app() -> FastAPI:
         jpeg = video_enc.encode_frame(frame, quality=90)
         return Response(content=jpeg, media_type="image/jpeg")
 
+    @app.get("/api/stream/info")
+    async def get_stream_info():
+        """Get video stream information including dimensions after rotation."""
+        video_enc = _app_state.get("video_encoder")
+        if not video_enc:
+            raise HTTPException(status_code=503, detail="Video encoder not available")
+
+        width, height = video_enc.frame_size
+        return {
+            "width": width,
+            "height": height,
+            "rotation_degrees": video_enc.config.rotation_degrees,
+            "fps": video_enc.config.fps,
+            "codec": video_enc.config.codec,
+            "is_running": video_enc.is_running,
+        }
+
     # Audio streaming (WAV format for HTTP clients)
     @app.get("/api/stream/audio")
     async def audio_stream():
@@ -514,7 +567,7 @@ def create_app() -> FastAPI:
             headers={
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
-            }
+            },
         )
 
     @app.get("/api/audio/status")
@@ -578,24 +631,24 @@ def create_app() -> FastAPI:
             file_ext = Path(file.filename).suffix.lower()
             if not file_ext:
                 file_ext = ".wav"
-            
+
             temp_path = TEMP_AUDIO_DIR / f"{file_id}{file_ext}"
-            
+
             # Save uploaded file
             content = await file.read()
             with open(temp_path, "wb") as f:
                 f.write(content)
-            
+
             logger.info(f"Uploaded audio: {file.filename} ({len(content)} bytes)")
-            
+
             # Play the file
             player.play_file(str(temp_path))
-            
+
             return {
                 "success": True,
                 "message": f"Playing {file.filename}",
                 "filename": file.filename,
-                "size": len(content)
+                "size": len(content),
             }
         except Exception as e:
             logger.error(f"Audio upload error: {e}")
@@ -610,30 +663,30 @@ def create_app() -> FastAPI:
 
         try:
             import base64
-            
+
             audio_data = request.get("audio_data")
             format_type = request.get("format", "wav")
-            
+
             if not audio_data:
                 raise HTTPException(status_code=400, detail="No audio data provided")
-            
+
             # Decode base64
             audio_bytes = base64.b64decode(audio_data)
-            
+
             # Save to temp file
             file_id = str(uuid.uuid4())
             temp_path = TEMP_AUDIO_DIR / f"{file_id}.{format_type}"
-            
+
             with open(temp_path, "wb") as f:
                 f.write(audio_bytes)
-            
+
             # Play the file
             player.play_file(str(temp_path))
-            
+
             return {
                 "success": True,
                 "message": "Playing audio",
-                "size": len(audio_bytes)
+                "size": len(audio_bytes),
             }
         except Exception as e:
             logger.error(f"Base64 audio playback error: {e}")
@@ -645,11 +698,8 @@ def create_app() -> FastAPI:
         player = _app_state.get("audio_player")
         if not player:
             return {"available": False}
-        
-        return {
-            "available": True,
-            "is_playing": player.is_playing
-        }
+
+        return {"available": True, "is_playing": player.is_playing}
 
     # Text-to-speech (server-side, supports Cantonese and all Edge TTS languages)
     @app.post("/api/tts/speak")
@@ -713,7 +763,9 @@ def create_app() -> FastAPI:
         record_dir.mkdir(exist_ok=True)
         record_path = record_dir / f"input_{uuid.uuid4().hex}.wav"
 
-        await asyncio.to_thread(audio_rec.record_to_file, str(record_path), request.duration)
+        await asyncio.to_thread(
+            audio_rec.record_to_file, str(record_path), request.duration
+        )
         wav_bytes = record_path.read_bytes()
 
         # Play "Processing. Please wait." every 5s until the pipeline finishes.
@@ -834,11 +886,11 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=503, detail="Alarm manager not available")
 
         history = alarm_mgr.get_detection_history(limit=limit)
-        
+
         # Filter by event type if specified
         if event_type:
             history = [h for h in history if h.event_type == event_type]
-        
+
         return {
             "events": [h.to_dict() for h in history],
             "count": len(history),
@@ -859,17 +911,17 @@ def create_app() -> FastAPI:
         """Configure webhook URL for notifications."""
         from config import NOTIFICATION_WEBHOOK_URL
         import config
-        
+
         # Update the config module
         config.NOTIFICATION_WEBHOOK_URL = url if url else None
-        
+
         # Update the notification manager if available
         alarm_mgr = _app_state.get("alarm_manager")
-        if alarm_mgr and hasattr(alarm_mgr, '_notification_manager'):
+        if alarm_mgr and hasattr(alarm_mgr, "_notification_manager"):
             alarm_mgr._notification_manager.webhook_url = url if url else None
-        
+
         return {
-            "success": True, 
+            "success": True,
             "message": f"Webhook {'set' if url else 'cleared'}",
             "url": url if url else None,
         }
@@ -940,7 +992,9 @@ def create_app() -> FastAPI:
                     for q in request.questions
                 ]
             except (KeyError, ValueError) as exc:
-                raise HTTPException(status_code=422, detail=f"Invalid question format: {exc}")
+                raise HTTPException(
+                    status_code=422, detail=f"Invalid question format: {exc}"
+                )
         else:
             questions = list(DEFAULT_QUESTIONS)
 
@@ -973,6 +1027,7 @@ def create_app() -> FastAPI:
                 return
             try:
                 from esp_serial.commands import CommandBuilder
+
                 packed = img_processor.render_lesson(
                     question=question, options=options, title=title
                 )
@@ -1007,6 +1062,7 @@ def create_app() -> FastAPI:
             return {"active": False, "state": "idle", "score": 0, "total": 0}
 
         from education.quiz_engine import QuizState
+
         q_index = engine._index
         questions = engine._questions
         current_q = questions[q_index] if q_index < len(questions) else None
@@ -1039,7 +1095,9 @@ def create_app() -> FastAPI:
         return {
             "success": True,
             "handled": handled,
-            "message": "Gesture processed" if handled else "Gesture ignored (not waiting for answer)",
+            "message": "Gesture processed"
+            if handled
+            else "Gesture ignored (not waiting for answer)",
         }
 
     @app.post("/api/quiz/stop")
@@ -1070,6 +1128,7 @@ def create_app() -> FastAPI:
           2. Server sends binary Int16 PCM chunks continuously.
         """
         import json as _json
+
         try:
             await websocket.accept()
         except Exception:
@@ -1081,19 +1140,38 @@ def create_app() -> FastAPI:
             await websocket.close()
             return
 
-        await websocket.send_text(_json.dumps({
-            "type": "audio_config",
-            "sample_rate": audio_rec.sample_rate,
-            "channels": 1,
-            "format": "int16",
-        }))
+        await websocket.send_text(
+            _json.dumps(
+                {
+                    "type": "audio_config",
+                    "sample_rate": audio_rec.sample_rate,
+                    "channels": 1,
+                    "format": "int16",
+                }
+            )
+        )
 
+        # Use a per-client asyncio queue fed by a recorder callback so this
+        # WebSocket gets its own copy of every chunk without competing with the
+        # ASR pipeline, which also drains the shared _audio_queue.
+        client_queue: asyncio.Queue = asyncio.Queue(maxsize=50)
+        loop = asyncio.get_event_loop()
+
+        def _on_chunk(chunk) -> None:
+            data = chunk.tobytes()
+            try:
+                loop.call_soon_threadsafe(client_queue.put_nowait, data)
+            except Exception:
+                pass  # queue full or loop closed — drop the frame
+
+        audio_rec.add_callback(_on_chunk)
         try:
             while True:
-                chunk = await asyncio.to_thread(audio_rec.get_audio, 0.5)
-                if chunk is not None:
-                    await websocket.send_bytes(chunk.tobytes())
+                data = await asyncio.wait_for(client_queue.get(), timeout=2.0)
+                await websocket.send_bytes(data)
         except Exception:
             pass
+        finally:
+            audio_rec.remove_callback(_on_chunk)
 
     return app

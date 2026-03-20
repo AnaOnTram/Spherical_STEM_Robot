@@ -155,11 +155,11 @@ def _start_local_server() -> bool:
 
     repo_root = Path(__file__).resolve().parent.parent
     search_paths = [
+        repo_root / "llama_server" / "llama-server",
         Path.home() / "llama.cpp" / "build" / "bin" / "llama-server",
         Path.home() / "llama.cpp" / "llama-server",
         Path("/usr/local/bin/llama-server"),
         Path("/usr/bin/llama-server"),
-        repo_root / "LLM_Chat" / "server" / "llama-server",
     ]
 
     llama_server = next((p for p in search_paths if p.exists()), None)
@@ -203,12 +203,18 @@ def _start_local_server() -> bool:
         stdout_file = open(stdout_log, 'w')
         stderr_file = open(stderr_log, 'w')
 
+        # Add the server directory to LD_LIBRARY_PATH so bundled .so files are found
+        server_env = os.environ.copy()
+        lib_dir = str(llama_server.parent)
+        server_env["LD_LIBRARY_PATH"] = lib_dir + (":" + server_env["LD_LIBRARY_PATH"] if server_env.get("LD_LIBRARY_PATH") else "")
+
         _local_server_process = subprocess.Popen(
             cmd,
             stdout=stdout_file,
             stderr=stderr_file,
             start_new_session=True,
             cwd=llama_server.parent,
+            env=server_env,
         )
 
         print("[LLM Chat] Waiting for server to start...")
@@ -306,7 +312,8 @@ def _start_tts_service() -> bool:
     except Exception:
         pass
 
-    piper_model = "/home/admin/piper/en_US-amy-medium"
+    repo_root = Path(__file__).resolve().parent.parent
+    piper_model = str(repo_root / "LLM_Chat" / "models" / "piper" / config.LOCAL_TTS_VOICE)
     if not Path(piper_model + ".onnx").exists():
         print(f"[TTS] Piper model not found: {piper_model}.onnx")
         return False
@@ -501,7 +508,10 @@ def oral_chat_with_llm(
                     temperature=temperature,
                     max_tokens=min(max_tokens, 100),
                     stream=True,
-                    extra_body={"reset_context": False},
+                    extra_body={
+                        "reset_context": False,
+                        "chat_template_kwargs": {"enable_thinking": False},
+                    },
                 )
                 break
             except openai.InternalServerError as e:

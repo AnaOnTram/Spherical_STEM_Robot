@@ -54,93 +54,38 @@ logger = logging.getLogger(__name__)
 
 
 class NoiseReducer:
-    """Real-time noise reduction using spectral subtraction and adaptive filtering."""
+    """Real-time noise reduction using a high-pass filter and adaptive filtering."""
 
     def __init__(self, sample_rate: int = 48000, frame_size: int = 512):
         self.sample_rate = sample_rate
         self.frame_size = frame_size
-
-        # Spectral subtraction parameters
-        self.noise_floor = None
-        self.noise_floor_alpha = 0.98  # Smoothing factor for noise floor update
-        self.subtraction_factor = 1.2  # Fix 3: reduced from 2.0 — safe range is 1.0-1.5;
-                                       # 2.0 over-subtracts and creates musical noise artifacts
-        self.spectral_floor = 0.05     # Fix 3: raised from 0.01 — preserves low-energy
-                                       # consonants (s, f, t, p) that Whisper relies on
 
         # Adaptive filter for dual-mic (LMS algorithm)
         self.filter_order = 128
         self.filter_weights = np.zeros(self.filter_order)
         self.mu = 0.01  # Learning rate for LMS
 
-        # Buffer for overlap-add processing
-        self.overlap = frame_size // 2
-        self.prev_frame = np.zeros(self.overlap)
+        # High-pass filter (80 Hz cutoff) to remove USB power-line hum (~44 Hz)
+        # and any sub-speech-range interference.  Butterworth order-4 gives a
+        # clean roll-off without ringing.  SOS form is numerically stable.
+        self._hp_sos = None
+        self._hp_zi = None
+        if SCIPY_AVAILABLE:
+            from scipy.signal import butter, sosfilt_zi
+            self._hp_sos = butter(4, 80.0, btype='high', fs=sample_rate, output='sos')
+            self._hp_zi = sosfilt_zi(self._hp_sos) * 0  # zero initial state
 
-        # Voice activity detection
-        self.vad_threshold = 0.02
-        self.noise_estimate_frames = 0
-        self.noise_estimate_max_frames = 50  # ~0.5s at 48kHz/512
+    def highpass_filter(self, audio: np.ndarray) -> np.ndarray:
+        """Apply 80 Hz high-pass filter to remove USB power-line hum.
 
-    def estimate_noise_floor(self, spectrum: np.ndarray) -> None:
-        """Update noise floor estimate during silence."""
-        if self.noise_floor is None:
-            self.noise_floor = spectrum.copy()
-        else:
-            # Exponential moving average
-            self.noise_floor = (
-                self.noise_floor_alpha * self.noise_floor +
-                (1 - self.noise_floor_alpha) * spectrum
-            )
-
-    def spectral_subtraction(self, audio: np.ndarray) -> np.ndarray:
-        """Apply spectral subtraction noise reduction."""
-        if not SCIPY_AVAILABLE:
+        The filter state (_hp_zi) is preserved across calls so there are no
+        discontinuities at chunk boundaries.
+        """
+        if not SCIPY_AVAILABLE or self._hp_sos is None:
             return audio
-
-        # Apply window
-        window = np.hanning(len(audio))
-        windowed = audio.astype(np.float32) * window
-
-        # FFT
-        spectrum = np.fft.rfft(windowed)
-        magnitude = np.abs(spectrum)
-        phase = np.angle(spectrum)
-
-        # Check for voice activity (simple energy-based VAD)
-        energy = np.mean(audio.astype(np.float32) ** 2)
-        is_speech = energy > self.vad_threshold
-
-        if not is_speech and self.noise_estimate_frames < self.noise_estimate_max_frames:
-            # Update noise floor during silence
-            self.estimate_noise_floor(magnitude)
-            self.noise_estimate_frames += 1
-        elif self.noise_floor is None:
-            # No noise estimate yet, pass through
-            return audio
-
-        # Spectral subtraction
-        if self.noise_floor is not None:
-            # Reset if chunk size changed (ALSA can return variable-length reads)
-            if self.noise_floor.shape != magnitude.shape:
-                self.noise_floor = None
-                self.noise_estimate_frames = 0
-                return audio
-            # Subtract noise floor
-            cleaned_magnitude = magnitude - self.subtraction_factor * self.noise_floor
-            # Apply spectral floor to prevent musical noise
-            cleaned_magnitude = np.maximum(cleaned_magnitude, self.spectral_floor * magnitude)
-
-            # Reconstruct signal
-            cleaned_spectrum = cleaned_magnitude * np.exp(1j * phase)
-            cleaned = np.fft.irfft(cleaned_spectrum)
-
-            # Remove window effect with overlap-add
-            cleaned = cleaned[:len(audio)]
-
-            return cleaned.astype(np.int16)
-
-        return audio
+        from scipy.signal import sosfilt
+        filtered, self._hp_zi = sosfilt(self._hp_sos, audio.astype(np.float32), zi=self._hp_zi)
+        return np.clip(filtered, -32768, 32767).astype(np.int16)
 
     def adaptive_filter_lms(
         self,
@@ -202,8 +147,8 @@ class NoiseReducer:
             # Dual-mic adaptive noise cancellation
             audio = self.adaptive_filter_lms(audio, reference)
 
-        # Apply spectral subtraction for remaining noise
-        audio = self.spectral_subtraction(audio)
+        # High-pass filter removes USB power-line hum (44–50 Hz range)
+        audio = self.highpass_filter(audio)
 
         return audio
 
