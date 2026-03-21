@@ -39,18 +39,14 @@ conda activate bot
 ```bash
 pip install -r requirements.txt
 ```
+* Download the model files if wish to enable local LLM chatting function.[^3]
 * Compile the [ESP32 sketch](/esp32/esp32_firmware/esp32_firmware.ino) using Arduino IDE.
-* Connect ESP32, USB Cam, and USB sound card to the Pi5
+* Connect ESP32, USB Cam, and USB sound card to the Pi5[^4]
 * Start the program
-~~* Set the keys if you would like to use the cloud inference service.[^3]~~
-```bash
-export INTERMEDIATE_SERVER_AUTH=[your-authentication-key] # for legacy function that no longer support
-```
-* Start the service
 ```bash
 python main.py
 ```
-* You may use another host machine to check the status using the [sample debugging webface](debug/index_alt.html)
+* You may use another host machine to check the status using the [sample debugging webface](debug/index.html)[^5]
 
 ## Front-end UI/UX
 > __<i>This repo only contains back-end solutions with simple debugging pannel.</i>__
@@ -64,5 +60,8 @@ For front-end, please check [Xd06eR/wonderball-app](https://github.com/Xd06eR/wo
 [^2]: Implemented via ESP32  
   ESP32 is connected to Raspberry Pi 5 through USB serial (appears as `/dev/ttyACM0` on Pi 5)
 
-[^3]: ~~The current cloud inference service adopts a self-hosted API transfer node (VPN-liked) as GPT/Gemini are currently unavailable in Hong Kong. You may directly use the OpenAI API platform or use 3rd party platform like openrouter.~~
+[^3]: Please refers to [function documentation](LLM_Chat/README.md)
 
+[^4]: Please refers to [ESP Wiring Documentation](ESP32/README.md) for detailed instruction of how to wiring the ESP32 to the motor drive.
+
+[^5]: You have to set the target IP before testing any functions.
