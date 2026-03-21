@@ -80,6 +80,7 @@ class AlarmManager:
         # Detection tracking
         self._crying_start: Optional[datetime] = None
         self._last_alarm: Optional[datetime] = None
+        self._last_cry_time: Optional[datetime] = None
         self._detection_count = 0
 
         # Ensure recordings directory exists
@@ -153,6 +154,7 @@ class AlarmManager:
         if self._state == AlarmState.IDLE:
             if is_crying:
                 self._crying_start = datetime.now()
+                self._last_cry_time = datetime.now()
                 self._state = AlarmState.DETECTING
                 self._detection_count = 1
                 logger.info(f"Crying detected, confidence: {event.confidence:.2f}")
@@ -160,6 +162,7 @@ class AlarmManager:
         elif self._state == AlarmState.DETECTING:
             if is_crying:
                 self._detection_count += 1
+                self._last_cry_time = datetime.now()
                 elapsed = (datetime.now() - self._crying_start).total_seconds() if self._crying_start else 0
 
                 if elapsed >= self.config.detection_duration:
@@ -170,11 +173,14 @@ class AlarmManager:
                     )
                     self._trigger_alarm(event.confidence)
             else:
-                # Reset if crying stops
-                self._state = AlarmState.IDLE
-                self._crying_start = None
-                self._detection_count = 0
-                logger.debug("Crying stopped, resetting detection")
+                # Only reset if crying has been absent for more than 5 seconds
+                gap = (datetime.now() - self._last_cry_time).total_seconds() if self._last_cry_time else 0
+                if gap >= 5.0:
+                    self._state = AlarmState.IDLE
+                    self._crying_start = None
+                    self._last_cry_time = None
+                    self._detection_count = 0
+                    logger.debug("Crying stopped, resetting detection")
 
         elif self._state == AlarmState.COOLDOWN:
             if self._last_alarm:

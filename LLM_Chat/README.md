@@ -4,23 +4,27 @@ A sub-module of the project that aims to interact with pre-school children throu
 ## Local Deployment
 * Download the models
 ```bash
-# create a directory to store the model if you like
-mkdir model && cd model
-# download model files. GGUF for this project. You may consider using huggingface-cli for better download experience. Adjust quantization based on your available RAM capacity and computational power for better experience.
-wget https://huggingface.co/LiquidAI/LFM2.5-Audio-1.5B-GGUF/resolve/main/LFM2.5-Audio-1.5B-Q4_0.gguf
-wget https://huggingface.co/LiquidAI/LFM2.5-Audio-1.5B-GGUF/resolve/main/mmproj-LFM2.5-Audio-1.5B-Q4_0.gguf
-wget https://huggingface.co/LiquidAI/LFM2.5-Audio-1.5B-GGUF/resolve/main/tokenizer-LFM2.5-Audio-1.5B-Q4_0.gguf
-wget https://huggingface.co/LiquidAI/LFM2.5-Audio-1.5B-GGUF/resolve/main/vocoder-LFM2.5-Audio-1.5B-Q4_0.gguf
+cd models
+# Download the three esential models files for this project
+cd text_model
+# make the downloading script executable
+chmod +x qwen.sh
+# download the file
+./qwen.sh
+
+cd ..
+cd piper
+chmod +x piper_model.sh
+./piper_model.sh
 ```
-<font color='red'>Please adjust the model path in `config.py` correspondingly</font>
-* Download the official cpp engine
+<font color='red'>This project already has llama.cpp built for raspberry pi. If you encounter issues. Please try to compile the inference engine yourself!</font>
+* Compile the inference engine (optional)
 ```bash
-cd LLM_Chat
-wget https://huggingface.co/LiquidAI/LFM2.5-Audio-1.5B-GGUF/resolve/main/runners/llama-liquid-audio-ubuntu-arm64.zip
-unzip llama-liquid-audio-ubuntu-arm64.zip mv llama-liquid-audio-ubuntu-arm64 server
+git clone https://github.com/ggml-org/llama.cpp.git
+cd llama.cpp
+cmake -B build
+cmake --build build --config Release -j # adjust this command based on your CPU threads and available memory.
+mv /build/bin ~/Spherical_STEM_ROBOT/llama_server # Copy executable files to project directory. Clean the original file first!!!
 ```
 ### Expected Performance
 On a raspberry pi 5 with 4GB RAM, the system generate the audio response in around 30s for a 5 seconds audio input.
-
-## Cloud Solution
-* Use OpenRouter LLM chat service for audio response.

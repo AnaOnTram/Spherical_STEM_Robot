@@ -216,13 +216,16 @@ class SphericalBot:
         from api.websocket import ws_manager
         from audio.alarm_manager import AlarmEvent
 
+        loop = asyncio.get_event_loop()
+
         def on_alarm(event: AlarmEvent):
-            asyncio.create_task(
+            asyncio.run_coroutine_threadsafe(
                 ws_manager.broadcast_alarm(
                     event.state.value,
                     event.duration,
                     event.audio_file,
-                )
+                ),
+                loop,
             )
 
         self.alarm_manager.add_callback(on_alarm)
