@@ -142,15 +142,46 @@ class VideoEncoder:
 
         logger.info("Video capture stopped")
 
+    def _reconnect(self) -> bool:
+        """Attempt to reopen the camera device."""
+        if self._capture:
+            self._capture.release()
+            self._capture = None
+        time.sleep(1.0)
+        self._capture = cv2.VideoCapture(self.config.device, cv2.CAP_V4L2)
+        if not self._capture.isOpened():
+            self._capture = cv2.VideoCapture(self.config.device)
+        if not self._capture.isOpened():
+            logger.error(f"Reconnect failed: cannot open {self.config.device}")
+            return False
+        self._capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.config.width)
+        self._capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.config.height)
+        self._capture.set(cv2.CAP_PROP_FPS, self.config.fps)
+        logger.info("Camera reconnected successfully")
+        return True
+
     def _capture_loop(self) -> None:
         """Capture thread loop - optimized for low latency."""
+        consecutive_failures = 0
+        MAX_FAILURES_BEFORE_RECONNECT = 30
+
         while self._running:
             try:
                 ret, frame = self._capture.read()
                 if not ret:
-                    logger.warning("Failed to read frame")
-                    time.sleep(0.001)
+                    consecutive_failures += 1
+                    if consecutive_failures == 1 or consecutive_failures % MAX_FAILURES_BEFORE_RECONNECT == 0:
+                        logger.warning(
+                            f"Failed to read frame (attempt {consecutive_failures}); "
+                            "attempting camera reconnect"
+                        )
+                        if not self._reconnect():
+                            time.sleep(2.0)
+                    else:
+                        time.sleep(0.1)
                     continue
+
+                consecutive_failures = 0
 
                 frame = self._apply_rotation(frame)
 

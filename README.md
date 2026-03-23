@@ -1,5 +1,8 @@
 # WonderBall
 Devoting in building stories with both wonderful childs and their loving parents.
+<div align ='center'>
+<img src='Assets/ball.jpg' width= 50%>
+</div>
 
 ## Project Components
 - [x] [Raspberry Pi 5 4GB](https://www.digikey.com/en/products/detail/raspberry-pi/SC1431/21658261)
@@ -13,6 +16,10 @@ Devoting in building stories with both wonderful childs and their loving parents
 - [x] 18650 Battery (two)
 - [x] 18650 Battery Compartment
 - [x] Stepdown Converter
+
+<div align ='center'>
+<img src='Assets/core.jpg' width= 50%>
+</div>
 
 ## Functionalities
 - [x] Monitoring: Realtime video (mjpeg) and audio streaming[^1]
