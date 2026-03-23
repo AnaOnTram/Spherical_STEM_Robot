@@ -18,7 +18,7 @@ Devoting in building stories with both wonderful childs and their loving parents
 - [x] Stepdown Converter
 
 <div align ='center'>
-<img src='Assets/core.jpg' width= 50%>
+<img src='Assets/core.JPG' width= 50%>
 </div>
 
 ## Functionalities
