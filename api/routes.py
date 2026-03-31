@@ -287,6 +287,19 @@ def create_app() -> FastAPI:
         """Health check endpoint."""
         return {"status": "ok"}
 
+    @app.get("/api/local-ui/status")
+    async def get_local_ui_status():
+        """Get local UI bootstrap status."""
+        bootstrap_state = _app_state.get("bootstrap_state")
+        if not bootstrap_state:
+            return {
+                "phase": "error",
+                "home_menu_ready": False,
+                "last_error": "bootstrap_state not found in app state",
+            }
+        
+        return bootstrap_state.snapshot()
+
     @app.get("/api/gesture/status")
     async def get_gesture_status():
         """Latest gesture detection result (poll this for debugging)."""
