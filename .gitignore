@@ -39,6 +39,9 @@ Thumbs.db
 !.env.example
 node_modules/
 .next/
+# Virtual environments
+/.venv/
+/venv/
 .venv/
 venv/
 target/

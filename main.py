@@ -58,6 +58,7 @@ class SphericalBot:
         self.gesture_detector = None
         self.human_tracker = None
         self.yamnet_classifier = None
+        self.menu_state = None
 
         self._running = False
         self._tasks: list[asyncio.Task] = []
@@ -151,6 +152,7 @@ class SphericalBot:
             gesture_detector=self.gesture_detector,
             human_tracker=self.human_tracker,
             bootstrap_state=self.bootstrap_state,
+            menu_state=self.menu_state,
         )
 
     async def _publish_boot_home_menu(self, image_payload: bytes):
@@ -194,6 +196,8 @@ class SphericalBot:
 
             if self.bootstrap_state.home_menu_ready:
                 logger.info("bootstrap.ready after attempt=%s", attempt)
+                # Instantiate menu state machine after successful bootstrap
+                self._initialize_menu()
                 break
 
             logger.warning(
@@ -207,12 +211,32 @@ class SphericalBot:
 
         return self.bootstrap_state
 
+    def _initialize_menu(self):
+        """Initialize menu state machine after bootstrap completes."""
+        from local_ui.bootstrap import BASELINE_HOME_MENU_ENTRIES
+        from local_ui.menu_state import MenuStateMachine
+        from api.routes import set_app_state
+
+        try:
+            self.menu_state = MenuStateMachine(
+                menu_entries=BASELINE_HOME_MENU_ENTRIES,
+                audio_player=self.audio_player,
+                serial_manager=self.serial_manager,
+                image_processor=self.image_processor,
+            )
+            logger.info("menu.initialized entries=%s", BASELINE_HOME_MENU_ENTRIES)
+            set_app_state(menu_state=self.menu_state)
+        except Exception as e:
+            logger.error(f"menu.initialization_failed: {e}")
+            self.menu_state = None
+
     async def run_detection_loop(self):
         """Run CV detection loop."""
         if not self.video_encoder or not self.video_encoder.is_running:
             return
 
         from api.routes import update_gesture_state, _quiz_state
+        from cv_engine.gesture_detector import Gesture
 
         logger.info("Starting detection loop")
 
@@ -253,8 +277,25 @@ class SphericalBot:
                             hand_up,
                         )
 
-                        # Forward finger count to the quiz engine if one is active
-                        if finger_count >= 1:
+                        # Menu gesture handling (if menu is active)
+                        menu_active = bool(self.menu_state and self.menu_state.is_active)
+                        if menu_active:
+                            relevant_gestures = (
+                                Gesture.THUMBS_UP,
+                                Gesture.THUMBS_DOWN,
+                                Gesture.PEACE,  # Victory
+                                Gesture.OPEN_PALM,
+                            )
+                            if gesture.gesture in relevant_gestures:
+                                self.menu_state.handle_gesture(
+                                    gesture.gesture,
+                                    gesture.confidence,
+                                )
+                                if self.menu_state.consume_commit_requested():
+                                    asyncio.create_task(self.menu_state.commit_selection())
+
+                        # Skip quiz gesture handling while menu is active
+                        if not menu_active and finger_count >= 1:
                             try:
                                 _engine = _quiz_state.get("engine")
                                 if _engine is not None:

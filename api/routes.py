@@ -202,6 +202,7 @@ _app_state = {
     "gesture_detector": None,
     "human_tracker": None,
     "bootstrap_state": None,
+    "menu_state": None,
 }
 
 # Active quiz session state (module-level so main.py detection loop can reach it)
@@ -299,6 +300,23 @@ def create_app() -> FastAPI:
             }
         
         return bootstrap_state.snapshot()
+
+    @app.get("/api/local-ui/menu/status")
+    async def get_menu_status():
+        """Get current menu state snapshot for gesture navigation debugging."""
+        menu_state = _app_state.get("menu_state")
+        if not menu_state:
+            raise HTTPException(status_code=404, detail="menu_state not initialized")
+
+        snapshot = menu_state.snapshot()
+        return {
+            "state": snapshot.state,
+            "selected_index": snapshot.selected_index,
+            "menu_entries": list(snapshot.menu_entries),
+            "locked": snapshot.locked,
+            "victory_hold_progress": snapshot.victory_hold_progress,
+            "timestamp": snapshot.timestamp,
+        }
 
     @app.get("/api/gesture/status")
     async def get_gesture_status():
