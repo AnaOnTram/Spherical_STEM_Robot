@@ -427,6 +427,100 @@ class EInkImageProcessor:
         img_1bit = img.convert("1")
         return self._pack_to_bytes(img_1bit)
 
+    def render_menu_selection(
+        self,
+        entries: Sequence[str],
+        selected_index: int,
+        title: str = "WonderBall Home",
+    ) -> bytes:
+        """Render home menu with visual highlight on selected item.
+
+        Args:
+            entries: Menu items to display (normalized to 4 items)
+            selected_index: Zero-based index of currently selected item
+            title: Menu header title
+
+        Returns:
+            15000 bytes of packed 1-bit image data
+        """
+        from PIL import Image, ImageDraw
+
+        # Normalize entries to baseline if needed
+        baseline = ("STEM", "Chat", "Follow", "Call Parent")
+        if entries is None:
+            normalized = baseline
+        else:
+            cleaned = tuple(str(item).strip() for item in entries if str(item).strip())
+            normalized = cleaned if len(cleaned) == 4 else baseline
+            if len(cleaned) != 4:
+                logger.warning(
+                    "Menu selection entries malformed (count=%s), using baseline.",
+                    len(cleaned),
+                )
+
+        # Clamp selected_index to valid range
+        selected_index = max(0, min(selected_index, len(normalized) - 1))
+
+        img = Image.new("L", (self.width, self.height), 255)
+        draw = ImageDraw.Draw(img)
+
+        font_header = self._load_cjk_font(20)
+        font_item = self._load_cjk_font(22)
+
+        # Header bar
+        header_height = 38
+        draw.rectangle([0, 0, self.width - 1, header_height], fill=0)
+        draw.text((12, 9), title, fill=255, font=font_header)
+
+        # Menu rows (4 deterministic rows)
+        row_top = header_height + 14
+        row_height = (self.height - row_top - 10) // 4
+        for index, label in enumerate(normalized):
+            y0 = row_top + index * row_height
+            y1 = y0 + row_height
+
+            # Row separator
+            if index > 0:
+                draw.line([(0, y0), (self.width - 1, y0)], fill=0, width=1)
+
+            # Highlight selected row with inverted background
+            if index == selected_index:
+                draw.rectangle([0, y0 + 1, self.width - 1, y1 - 1], fill=0)
+                text_fill = 255  # White text on black background
+                bullet_fill = 255
+                bullet_outline = 255
+            else:
+                text_fill = 0  # Black text on white background
+                bullet_fill = None  # Hollow bullet
+                bullet_outline = 0
+
+            # Draw bullet
+            bullet_cx = 22
+            bullet_cy = y0 + row_height // 2
+            if bullet_fill is not None:
+                draw.ellipse(
+                    [bullet_cx - 7, bullet_cy - 7, bullet_cx + 7, bullet_cy + 7],
+                    fill=bullet_fill,
+                    outline=bullet_outline,
+                    width=2,
+                )
+            else:
+                draw.ellipse(
+                    [bullet_cx - 7, bullet_cy - 7, bullet_cx + 7, bullet_cy + 7],
+                    outline=bullet_outline,
+                    width=2,
+                )
+
+            # Draw label
+            text_y = y0 + max(0, (row_height - 22) // 2)
+            draw.text((40, text_y), label, fill=text_fill, font=font_item)
+
+            # Keep final border deterministic
+            if index == 3:
+                draw.line([(0, y1), (self.width - 1, y1)], fill=0, width=1)
+
+        return self._pack_to_bytes(img.convert("1"))
+
     def create_pattern(self, pattern_type: str = "checkerboard") -> bytes:
         """Create test pattern for E-Ink display.
 
@@ -458,3 +552,35 @@ class EInkImageProcessor:
                         pixels[x, y] = 0
 
         return self.process(img)
+
+
+async def _synthesize_menu_audio_cue() -> None:
+    """Synthesize menu confirmation audio cue using edge_tts.
+
+    Saves audio to MENU_AUDIO_CUE_PATH (/tmp/menu_confirm.mp3).
+    Gracefully degrades if edge_tts is unavailable or synthesis fails.
+    """
+    try:
+        import edge_tts
+        from config import MENU_AUDIO_CUE_TEXT, MENU_AUDIO_CUE_VOICE, MENU_AUDIO_CUE_PATH
+
+        communicate = edge_tts.Communicate(MENU_AUDIO_CUE_TEXT, MENU_AUDIO_CUE_VOICE)
+        await communicate.save(MENU_AUDIO_CUE_PATH)
+        logger.info("Menu audio cue synthesized: %s", MENU_AUDIO_CUE_PATH)
+    except ImportError:
+        logger.warning("edge_tts not available, skipping menu audio cue synthesis")
+    except Exception as e:
+        logger.warning("Failed to synthesize menu audio cue: %s", e)
+
+
+def synthesize_menu_audio_cue() -> None:
+    """Synchronous wrapper for menu audio cue synthesis."""
+    import asyncio
+    try:
+        asyncio.run(_synthesize_menu_audio_cue())
+    except Exception as e:
+        logger.warning("Audio cue synthesis failed: %s", e)
+
+
+# Synthesize audio cue at module import
+synthesize_menu_audio_cue()
