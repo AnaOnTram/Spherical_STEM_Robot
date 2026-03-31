@@ -49,3 +49,6 @@ vendor/
 coverage/
 .cache/
 tmp/
+
+#test
+.bg-shell/
