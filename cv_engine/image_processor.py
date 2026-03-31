@@ -2,7 +2,7 @@
 import logging
 import re
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import List, Optional, Sequence, Union
 
 import numpy as np
 
@@ -272,6 +272,69 @@ class EInkImageProcessor:
         if current:
             lines.append(current)
         return lines
+
+    def render_home_menu(
+        self,
+        entries: Sequence[str] | None = None,
+        title: str = "WonderBall Home",
+    ) -> bytes:
+        """Render deterministic child home menu for boot-time display.
+
+        Expected baseline entries are exactly:
+        STEM, Chat, Follow, Call Parent.
+        Malformed entry lists are normalized back to this baseline.
+        """
+        from PIL import Image, ImageDraw
+
+        baseline = ("STEM", "Chat", "Follow", "Call Parent")
+        if entries is None:
+            normalized = baseline
+        else:
+            cleaned = tuple(str(item).strip() for item in entries if str(item).strip())
+            normalized = cleaned if len(cleaned) == 4 else baseline
+            if len(cleaned) != 4:
+                logger.warning(
+                    "Home menu entries malformed (count=%s), using baseline.",
+                    len(cleaned),
+                )
+
+        img = Image.new("L", (self.width, self.height), 255)
+        draw = ImageDraw.Draw(img)
+
+        font_header = self._load_cjk_font(20)
+        font_item = self._load_cjk_font(22)
+
+        # Header bar
+        header_height = 38
+        draw.rectangle([0, 0, self.width - 1, header_height], fill=0)
+        draw.text((12, 9), title, fill=255, font=font_header)
+
+        # Menu rows (4 deterministic rows)
+        row_top = header_height + 14
+        row_height = (self.height - row_top - 10) // 4
+        for index, label in enumerate(normalized):
+            y0 = row_top + index * row_height
+            y1 = y0 + row_height
+
+            if index > 0:
+                draw.line([(0, y0), (self.width - 1, y0)], fill=0, width=1)
+
+            bullet_cx = 22
+            bullet_cy = y0 + row_height // 2
+            draw.ellipse(
+                [bullet_cx - 7, bullet_cy - 7, bullet_cx + 7, bullet_cy + 7],
+                outline=0,
+                width=2,
+            )
+
+            text_y = y0 + max(0, (row_height - 22) // 2)
+            draw.text((40, text_y), label, fill=0, font=font_item)
+
+            # Keep final border deterministic
+            if index == 3:
+                draw.line([(0, y1), (self.width - 1, y1)], fill=0, width=1)
+
+        return self._pack_to_bytes(img.convert("1"))
 
     def render_lesson(
         self,

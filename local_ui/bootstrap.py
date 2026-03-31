@@ -1,18 +1,26 @@
-"""Bootstrap readiness contract for local UI startup.
-
-This module defines deterministic, metadata-only startup state that can be
-shared between startup orchestration and status APIs.
-"""
+"""Bootstrap readiness contract and startup orchestration for local UI."""
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from threading import RLock
-from typing import Any, Mapping
+from typing import Any, Awaitable, Callable, Mapping, Sequence
+
+from config import EINK_IMAGE_SIZE
+
+logger = logging.getLogger(__name__)
 
 REQUIRED_READINESS_KEYS: tuple[str, ...] = ("serial_manager", "image_processor")
+BASELINE_HOME_MENU_ENTRIES: tuple[str, str, str, str] = (
+    "STEM",
+    "Chat",
+    "Follow",
+    "Call Parent",
+)
 
 
 class BootstrapPhase(str, Enum):
@@ -65,11 +73,19 @@ class BootstrapState:
                 return self
 
             now = _utc_now_iso()
+            previous = self.phase.value
             self.phase = resolved_phase
             self.updated_at = now
             self.transition_timestamps.setdefault(resolved_phase.value, now)
             if resolved_phase == BootstrapPhase.HOME_MENU_READY:
                 self.home_menu_ready = True
+
+            logger.info(
+                "bootstrap.phase_transition previous=%s current=%s ready=%s",
+                previous,
+                resolved_phase.value,
+                self.home_menu_ready,
+            )
             return self
 
     def record_error(self, error: str) -> "BootstrapState":
@@ -85,6 +101,8 @@ class BootstrapState:
             self.last_error_at = now
             self.updated_at = now
             self.transition_timestamps.setdefault(BootstrapPhase.ERROR.value, now)
+
+            logger.error("bootstrap.error %s", self.last_error)
             return self
 
     def snapshot(self) -> dict[str, Any]:
@@ -130,6 +148,100 @@ def evaluate_readiness(
     return True, None
 
 
+def normalize_home_menu_entries(
+    entries: Sequence[str] | None,
+    fallback: tuple[str, str, str, str] = BASELINE_HOME_MENU_ENTRIES,
+) -> tuple[str, str, str, str]:
+    """Normalize menu entries to the deterministic four-item baseline.
+
+    If entries are missing or malformed, the baseline is used.
+    """
+    if entries is None:
+        return fallback
+
+    cleaned = tuple(str(item).strip() for item in entries if str(item).strip())
+    if len(cleaned) != 4:
+        return fallback
+
+    return cleaned  # type: ignore[return-value]
+
+
+async def run_bootstrap_flow(
+    *,
+    state: BootstrapState,
+    components: Mapping[str, Any],
+    render_home_menu: Callable[[Sequence[str]], bytes],
+    publish_image: Callable[[bytes], Awaitable[Any]],
+    required_keys: tuple[str, ...] = REQUIRED_READINESS_KEYS,
+    readiness_timeout_s: float,
+    render_timeout_s: float,
+    publish_timeout_s: float,
+    menu_entries: Sequence[str] | None = None,
+) -> BootstrapState:
+    """Execute readiness → render → publish bootstrap flow exactly once."""
+    if state.phase == BootstrapPhase.HOME_MENU_READY:
+        logger.info("bootstrap.skip already-ready")
+        return state
+
+    state.transition(BootstrapPhase.HEALTH_CHECK)
+    try:
+        is_ready, readiness_error = await asyncio.wait_for(
+            asyncio.to_thread(evaluate_readiness, components, required_keys),
+            timeout=readiness_timeout_s,
+        )
+    except asyncio.TimeoutError:
+        return state.record_error("readiness_timeout: health-check exceeded bootstrap budget")
+
+    if not is_ready:
+        return state.record_error(f"readiness_error: {readiness_error}")
+
+    state.transition(BootstrapPhase.RENDERING_HOME_MENU)
+    normalized_entries = normalize_home_menu_entries(menu_entries)
+
+    try:
+        image_payload = await asyncio.wait_for(
+            asyncio.to_thread(render_home_menu, normalized_entries),
+            timeout=render_timeout_s,
+        )
+    except asyncio.TimeoutError:
+        return state.record_error("render_timeout: home-menu render exceeded bootstrap budget")
+    except Exception as exc:
+        return state.record_error(f"render_error: {exc}")
+
+    if not isinstance(image_payload, (bytes, bytearray)):
+        return state.record_error(
+            "render_malformed: renderer returned non-bytes payload"
+        )
+
+    payload_bytes = bytes(image_payload)
+    if len(payload_bytes) != EINK_IMAGE_SIZE:
+        return state.record_error(
+            f"render_malformed: payload_size={len(payload_bytes)} expected={EINK_IMAGE_SIZE}"
+        )
+
+    state.transition(BootstrapPhase.PUBLISHING_HOME_MENU)
+    try:
+        serial_response = await asyncio.wait_for(
+            publish_image(payload_bytes),
+            timeout=publish_timeout_s,
+        )
+    except asyncio.TimeoutError:
+        return state.record_error("publish_timeout: serial publish exceeded bootstrap budget")
+    except Exception as exc:
+        return state.record_error(f"publish_error: {exc}")
+
+    status_value = _response_status_value(serial_response)
+    if status_value != "OK":
+        response_message = _sanitize_error(getattr(serial_response, "message", ""))
+        return state.record_error(
+            f"publish_error: status={status_value or 'UNKNOWN'} message={response_message or 'n/a'}"
+        )
+
+    state.transition(BootstrapPhase.HOME_MENU_READY)
+    logger.info("bootstrap.complete home-menu published successfully")
+    return state
+
+
 def transition_phase(state: BootstrapState, phase: BootstrapPhase | str) -> BootstrapState:
     """Module-level helper used by startup wiring for explicit transitions."""
     return state.transition(phase)
@@ -149,6 +261,22 @@ def _coerce_phase(phase: BootstrapPhase | str) -> BootstrapPhase | None:
         except ValueError:
             return None
     return None
+
+
+def _response_status_value(serial_response: Any) -> str | None:
+    """Extract an uppercase status token from a serial response-like object."""
+    status = getattr(serial_response, "status", None)
+    if status is None:
+        return None
+
+    if isinstance(status, str):
+        return status.upper()
+
+    value = getattr(status, "value", None)
+    if isinstance(value, str):
+        return value.upper()
+
+    return str(status).upper() if status else None
 
 
 def _utc_now_iso() -> str:

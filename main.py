@@ -10,7 +10,16 @@ from typing import Optional
 import numpy as np
 import uvicorn
 
-from config import API_HOST, API_PORT
+from config import (
+    API_HOST,
+    API_PORT,
+    BOOTSTRAP_MAX_ATTEMPTS,
+    BOOTSTRAP_PUBLISH_TIMEOUT_SECONDS,
+    BOOTSTRAP_READINESS_TIMEOUT_SECONDS,
+    BOOTSTRAP_RENDER_TIMEOUT_SECONDS,
+    BOOTSTRAP_REQUIRED_COMPONENTS,
+)
+from local_ui.bootstrap import BootstrapState, run_bootstrap_flow
 
 # Configure logging
 logging.basicConfig(
@@ -52,6 +61,7 @@ class SphericalBot:
 
         self._running = False
         self._tasks: list[asyncio.Task] = []
+        self.bootstrap_state = BootstrapState()
 
     def initialize(self) -> bool:
         """Initialize all components."""
@@ -140,7 +150,62 @@ class SphericalBot:
             image_processor=self.image_processor,
             gesture_detector=self.gesture_detector,
             human_tracker=self.human_tracker,
+            bootstrap_state=self.bootstrap_state,
         )
+
+    async def _publish_boot_home_menu(self, image_payload: bytes):
+        """Publish boot home menu payload through the existing serial command path."""
+        if not self.serial_manager:
+            raise RuntimeError("serial manager unavailable for home-menu publish")
+
+        from esp_serial.commands import CommandBuilder
+
+        command = CommandBuilder.display_image(image_payload)
+        return await self.serial_manager.send_command_async(command)
+
+    async def run_bootstrap(self) -> BootstrapState:
+        """Run deterministic local UI bootstrap flow before background work starts."""
+        components = {
+            "serial_manager": self.serial_manager,
+            "image_processor": self.image_processor,
+        }
+
+        def _render_home_menu(entries):
+            if not self.image_processor:
+                raise RuntimeError("image processor unavailable for home-menu render")
+            return self.image_processor.render_home_menu(entries)
+
+        for attempt in range(1, BOOTSTRAP_MAX_ATTEMPTS + 1):
+            logger.info(
+                "bootstrap.attempt=%s required=%s",
+                attempt,
+                list(BOOTSTRAP_REQUIRED_COMPONENTS),
+            )
+            await run_bootstrap_flow(
+                state=self.bootstrap_state,
+                components=components,
+                render_home_menu=_render_home_menu,
+                publish_image=self._publish_boot_home_menu,
+                required_keys=BOOTSTRAP_REQUIRED_COMPONENTS,
+                readiness_timeout_s=BOOTSTRAP_READINESS_TIMEOUT_SECONDS,
+                render_timeout_s=BOOTSTRAP_RENDER_TIMEOUT_SECONDS,
+                publish_timeout_s=BOOTSTRAP_PUBLISH_TIMEOUT_SECONDS,
+            )
+
+            if self.bootstrap_state.home_menu_ready:
+                logger.info("bootstrap.ready after attempt=%s", attempt)
+                break
+
+            logger.warning(
+                "bootstrap.not_ready attempt=%s phase=%s error=%s",
+                attempt,
+                self.bootstrap_state.snapshot().get("phase"),
+                self.bootstrap_state.snapshot().get("last_error"),
+            )
+            if self.bootstrap_state.phase.value == "error":
+                break
+
+        return self.bootstrap_state
 
     async def run_detection_loop(self):
         """Run CV detection loop."""
@@ -238,6 +303,7 @@ class SphericalBot:
 
     async def start(self):
         """Start the application."""
+        await self.run_bootstrap()
         self._running = True
 
         # Start background tasks

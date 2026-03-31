@@ -201,6 +201,7 @@ _app_state = {
     "image_processor": None,
     "gesture_detector": None,
     "human_tracker": None,
+    "bootstrap_state": None,
 }
 
 # Active quiz session state (module-level so main.py detection loop can reach it)
