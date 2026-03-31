@@ -27,3 +27,22 @@ LLM_Chat/models/**/*.onnx.json
 # IDE
 .vscode/
 .idea/
+
+# ── GSD baseline (auto-generated) ──
+.gsd
+Thumbs.db
+*.swp
+*.swo
+*~
+*.code-workspace
+.env.*
+!.env.example
+node_modules/
+.next/
+.venv/
+venv/
+target/
+vendor/
+coverage/
+.cache/
+tmp/
