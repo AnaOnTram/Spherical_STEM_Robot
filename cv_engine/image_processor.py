@@ -160,8 +160,8 @@ class EInkImageProcessor:
             byte = 0
             for j in range(8):
                 if i + j < len(pixels):
-                    # 1 = white, 0 = black (invert for e-ink)
-                    if pixels[i + j] == 0:  # Black pixel
+                    # 1 = white, 0 = black
+                    if pixels[i + j] != 0:  # White pixel
                         byte |= 1 << (7 - j)
             packed.append(byte)
 

@@ -20,8 +20,15 @@ SERIAL_PORT = "auto"  # Auto-detect ESP32
 SERIAL_BAUDRATE = 115200
 SERIAL_TIMEOUT = 5.0
 
-# Camera (USB OV5695 module)
-CAMERA_DEVICE = "/dev/video0"
+# Camera
+# CAMERA_BACKEND selects the capture backend:
+#   "auto"       - try picamera2, then libcamera subprocess, then v4l2
+#   "picamera2"  - libcamera Python API (CSI cameras; requires Python 3.13 on Pi)
+#   "libcamera"  - rpicam-vid subprocess → YUV pipe (CSI cameras, any Python version)
+#   "v4l2"       - OpenCV V4L2 (USB UVC cameras, /dev/videoX)
+# Install picamera2: sudo apt install -y python3-picamera2
+CAMERA_BACKEND = "auto"
+CAMERA_DEVICE = "/dev/video0"  # Only used by the v4l2 backend
 CAMERA_WIDTH = 640
 CAMERA_HEIGHT = 480
 CAMERA_FPS = 30
@@ -71,13 +78,18 @@ BOOTSTRAP_PUBLISH_TIMEOUT_SECONDS = 8.0
 BOOTSTRAP_MAX_ATTEMPTS = 1
 
 # Menu navigation and gesture confirmation (S02)
-MENU_VICTORY_HOLD_SECONDS = 3.0
-MENU_DEBOUNCE_FRAMES = 3
+MENU_VICTORY_HOLD_SECONDS = 5.0
+MENU_DEBOUNCE_FRAMES = 15
 MENU_DISPLAY_LOCK_TIMEOUT_SECONDS = 12.0
 MENU_GESTURE_CONFIDENCE_THRESHOLD = 0.7
 MENU_AUDIO_CUE_TEXT = "Confirmed"
 MENU_AUDIO_CUE_VOICE = "en-US-AriaNeural"
 MENU_AUDIO_CUE_PATH = "/tmp/menu_confirm.mp3"
+
+# Remote-first arbitration and cooldown resume (S03)
+REMOTE_PREEMPT_COOLDOWN_SECONDS = 10.0
+REMOTE_ACTIVE_NOTICE_TEXT = "Remote Control Active"
+REMOTE_ACTIVE_NOTICE_FONT_SIZE = 32
 
 # YAMNet Sound Detection
 YAMNET_THRESHOLD = 0.8

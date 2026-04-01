@@ -229,6 +229,8 @@ class SphericalBot:
         except Exception as e:
             logger.error(f"menu.initialization_failed: {e}")
             self.menu_state = None
+        self._is_display_updating = False
+        self._pending_display_update = False
 
     async def run_detection_loop(self):
         """Run CV detection loop."""
@@ -291,8 +293,33 @@ class SphericalBot:
                                     gesture.gesture,
                                     gesture.confidence,
                                 )
+
                                 if self.menu_state.consume_commit_requested():
-                                    asyncio.create_task(self.menu_state.commit_selection())
+                                    async def do_commit():
+                                        self._is_display_updating = True
+                                        try:
+                                            await self.menu_state.commit_selection()
+                                        finally:
+                                            self._is_display_updating = False
+                                    
+                                    asyncio.create_task(do_commit())
+                                    
+                                elif self.menu_state.consume_navigation_requested() or self._pending_display_update:
+                                    if self._is_display_updating:
+                                        self._pending_display_update = True
+                                        continue
+
+                                    async def do_sync():
+                                        self._is_display_updating = True
+                                        self._pending_display_update = False
+                                        try:
+                                            await self.menu_state.sync_display()
+                                        finally:
+                                            self._is_display_updating = False
+                                            # If another update became pending while we were sync'ing,
+                                            # it will be picked up in the next loop iteration.
+                                            
+                                    asyncio.create_task(do_sync())
 
                         # Skip quiz gesture handling while menu is active
                         if not menu_active and finger_count >= 1:

@@ -96,6 +96,7 @@ class MenuStateMachine:
 
         # Commit trigger tracking
         self._commit_requested = False
+        self._navigation_requested = False
 
     @property
     def state(self) -> MenuState:
@@ -123,6 +124,13 @@ class MenuStateMachine:
         if not self._commit_requested:
             return False
         self._commit_requested = False
+        return True
+
+    def consume_navigation_requested(self) -> bool:
+        """Return and clear navigation update flag."""
+        if not self._navigation_requested:
+            return False
+        self._navigation_requested = False
         return True
 
     def handle_gesture(self, gesture: Gesture, confidence: float) -> bool:
@@ -161,6 +169,40 @@ class MenuStateMachine:
         if self._victory_hold_start is not None:
             logger.debug("menu.victory_hold_reset reason=different_gesture gesture=%s", gesture.value)
             self._victory_hold_start = None
+
+        return False
+
+    async def sync_display(self) -> bool:
+        """Update e-ink display to reflect current selection (non-committing)."""
+        if self._locked:
+            return False
+
+        logger.info("menu.sync_display index=%d", self._selected_index)
+
+        try:
+            if self._image_processor is not None and self._serial_manager is not None:
+                payload = await asyncio.to_thread(
+                    self._image_processor.render_menu_selection,
+                    self._menu_entries,
+                    self._selected_index,
+                )
+
+                try:
+                    from esp_serial.commands import CommandBuilder
+
+                    command = CommandBuilder.display_image(payload)
+                except Exception as exc:
+                    logger.warning("menu.sync_display.command_builder_unavailable err=%s", exc)
+                    command = payload
+
+                # We don't lock the entire state machine for sync, but we do use the serial manager
+                await asyncio.wait_for(
+                    self._serial_manager.send_command_async(command),
+                    timeout=self._lock_timeout_seconds,
+                )
+                return True
+        except Exception as exc:
+            logger.error("menu.sync_display.error err=%s", exc)
 
         return False
 
@@ -265,6 +307,7 @@ class MenuStateMachine:
                 self._selected_index,
                 self._menu_entries[self._selected_index],
             )
+            self._navigation_requested = True
             return True
 
         return False
@@ -289,6 +332,7 @@ class MenuStateMachine:
                 self._selected_index,
                 self._menu_entries[self._selected_index],
             )
+            self._navigation_requested = True
             return True
 
         return False
@@ -296,6 +340,7 @@ class MenuStateMachine:
     def _handle_victory(self) -> bool:
         if self._state == MenuState.IDLE:
             self._transition_to(MenuState.NAVIGATING)
+            self._navigation_requested = True
             return True
 
         if self._state not in (MenuState.NAVIGATING, MenuState.CONFIRMING):
@@ -307,6 +352,7 @@ class MenuStateMachine:
             if self._state == MenuState.NAVIGATING:
                 self._transition_to(MenuState.CONFIRMING)
             logger.debug("menu.victory_hold_start")
+            self._navigation_requested = True
             return True
 
         elapsed = now - self._victory_hold_start

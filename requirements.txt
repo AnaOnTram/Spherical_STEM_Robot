@@ -16,12 +16,19 @@ pyserial>=3.5
 # Using 4.9.0.80 which is compatible with numpy 1.x
 opencv-python==4.13.0.90
 Pillow>=10.2.0
+# picamera2: CSI camera support on Raspberry Pi (install via apt, not pip):
+#   sudo apt install -y python3-picamera2
+# picamera2>=0.3  # uncomment only if using pip in a venv that has libcamera bindings
+
+python-multipart
 
 # Audio processing
 pyalsaaudio>=0.10.0; platform_system=='Linux'
 sounddevice>=0.4.6; platform_system!='Linux'
-numpy>=1.26.0,<2.0.0
+numpy>=1.26.0
 scipy>=1.11.0
+flask 
+faster-whisper  
 
 # LLM chat
 openai>=1.0.0
