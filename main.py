@@ -66,6 +66,7 @@ class SphericalBot:
         self._running = False
         self._tasks: list[asyncio.Task] = []
         self.bootstrap_state = BootstrapState()
+        self._stem_session_active = False
 
     def initialize(self) -> bool:
         """Initialize all components."""
@@ -171,6 +172,7 @@ class SphericalBot:
             bootstrap_state=self.bootstrap_state,
             menu_state=self.menu_state,
             arbitration=self.arbitration_controller,
+            on_quiz_finished=self._handle_stem_session_finished,
         )
 
     async def _publish_boot_home_menu(self, image_payload: bytes):
@@ -233,7 +235,21 @@ class SphericalBot:
         """Launch STEM education flow using the existing quiz API engine path."""
         from api.routes import QuizStartRequest, quiz_start
 
+        self._stem_session_active = True
+        logger.info("stem_session_started source=local_menu")
         await quiz_start(QuizStartRequest())
+
+    def _handle_stem_session_finished(self) -> None:
+        """Finalize STEM session and deterministically restore home menu interaction state."""
+        if not self._stem_session_active:
+            return
+
+        self._stem_session_active = False
+        logger.info("stem_session_finished source=quiz_engine")
+
+        if self.menu_state is not None and hasattr(self.menu_state, "reset_after_external_session"):
+            self.menu_state.reset_after_external_session()
+            logger.info("menu_restored source=stem_exit")
 
     async def _handle_local_stem_commit(
         self,
@@ -298,7 +314,7 @@ class SphericalBot:
                 arbitration=self.arbitration_controller,
             )
             logger.info("menu.initialized entries=%s", BASELINE_HOME_MENU_ENTRIES)
-            set_app_state(menu_state=self.menu_state, arbitration=self.arbitration_controller)
+            set_app_state(menu_state=self.menu_state, arbitration=self.arbitration_controller, on_quiz_finished=self._handle_stem_session_finished)
         except Exception as e:
             logger.error(f"menu.initialization_failed: {e}")
             self.menu_state = None

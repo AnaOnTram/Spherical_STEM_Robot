@@ -207,7 +207,7 @@ _app_state = {
 }
 
 # Active quiz session state (module-level so main.py detection loop can reach it)
-_quiz_state: dict = {"engine": None, "voice": "en-US-AriaNeural"}
+_quiz_state: dict = {"engine": None, "voice": "en-US-AriaNeural", "on_finish": None}
 
 # Latest gesture detection state (updated by detection loop, read by /api/gesture/status)
 _gesture_state: dict = {
@@ -250,6 +250,9 @@ def update_gesture_state(
 
 def set_app_state(**kwargs) -> None:
     """Set application state components."""
+    on_quiz_finished = kwargs.pop("on_quiz_finished", None)
+    if on_quiz_finished is not None:
+        _quiz_state["on_finish"] = on_quiz_finished
     _app_state.update(kwargs)
 
 
@@ -1051,6 +1054,16 @@ def create_app() -> FastAPI:
     # Quiz endpoints  (education/quiz_engine.py)
     # -----------------------------------------------------------------------
 
+    async def _finalize_quiz_session() -> None:
+        """Clear active quiz engine and notify lifecycle listener when a session ends."""
+        _quiz_state["engine"] = None
+        on_finish = _quiz_state.get("on_finish")
+        if callable(on_finish):
+            try:
+                on_finish()
+            except Exception as exc:
+                logger.error("quiz.on_finish_callback_failed err=%s", exc)
+
     @app.post("/api/quiz/start")
     async def quiz_start(request: QuizStartRequest):
         """Start an interactive MCQ quiz session.
@@ -1137,8 +1150,15 @@ def create_app() -> FastAPI:
         )
         _quiz_state["engine"] = engine
 
+        async def _run_engine() -> None:
+            try:
+                await engine.start()
+            finally:
+                if _quiz_state.get("engine") is engine:
+                    await _finalize_quiz_session()
+
         # Fire quiz in background so this endpoint returns immediately
-        asyncio.create_task(engine.start())
+        asyncio.create_task(_run_engine())
 
         return {
             "success": True,

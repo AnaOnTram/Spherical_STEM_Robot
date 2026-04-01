@@ -138,6 +138,20 @@ class MenuStateMachine:
         self._navigation_requested = False
         return True
 
+    def reset_after_external_session(self) -> None:
+        """Restore deterministic home-menu interaction state after external session exits."""
+        self._commit_requested = False
+        self._navigation_requested = False
+        self._victory_hold_start = None
+        self._debounce_count = 0
+        self._debounce_candidate = None
+        if self._locked:
+            self.unlock()
+        if self._state == MenuState.LOCKED:
+            self._transition_to(MenuState.NAVIGATING)
+        elif self._state == MenuState.COMMITTED:
+            self._transition_to(MenuState.NAVIGATING)
+
     def handle_gesture(self, gesture: Gesture, confidence: float) -> bool:
         """Process an incoming gesture event.
 
