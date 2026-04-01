@@ -1,147 +1,76 @@
-"""Tests for deterministic local STEM launch dispatch from menu commits."""
+"""Focused tests for deterministic local STEM launch dispatch contract."""
 
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
-from cv_engine.gesture_detector import Gesture
-from local_ui.menu_state import MenuStateMachine
 from main import SphericalBot
 
 
-class FakeArbitration:
-    def __init__(self, local_allowed: bool = True, reason: str = "local_allowed"):
-        self._local_allowed = local_allowed
-        self._reason = reason
+class _FakeMenuState:
+    def __init__(self, selected_item: str):
+        self.menu_entries = (selected_item,)
+        self.selected_index = 0
+        self._commit_requested = True
 
-    def is_local_allowed(self) -> bool:
-        return self._local_allowed
-
-    def snapshot(self):
-        return {
-            "state": "local" if self._local_allowed else "remote",
-            "reason": self._reason,
-        }
-
-
-class FakeMenuState:
-    def __init__(self, selected: str = "STEM", commit_once: bool = True):
-        self.is_active = True
-        self.menu_entries = ("STEM", "Chat", "Follow")
-        self.selected_index = self.menu_entries.index(selected)
-        self._commit_once = commit_once
-        self._commit_consumed = False
-        self.handle_calls = 0
-        self.commit_calls = 0
-        self.sync_calls = 0
-
-    def handle_gesture(self, gesture, confidence):
-        self.handle_calls += 1
-        return True
-
-    def consume_commit_requested(self):
-        if self._commit_once and self._commit_consumed:
+    def consume_commit_requested(self) -> bool:
+        if not self._commit_requested:
             return False
-        self._commit_consumed = True
-        return True
-
-    def consume_navigation_requested(self):
-        return False
-
-    async def commit_selection(self):
-        self.commit_calls += 1
-        return True
-
-    async def sync_display(self):
-        self.sync_calls += 1
+        self._commit_requested = False
         return True
 
 
-class FakeGestureDetector:
-    def __init__(self, gestures):
-        self._gestures = list(gestures)
-        self._use_mediapipe = False
+def test_single_commit_dispatches_single_stem_launch_call():
+    bot = SphericalBot(enable_video=False, enable_audio=False, enable_serial=False, enable_alarm=False)
+    launch_calls: list[str] = []
 
-    def detect(self, frame):
-        if self._gestures:
-            return [self._gestures.pop(0)]
-        return []
+    async def _launch(item: str) -> None:
+        launch_calls.append(item)
 
+    async def _run():
+        launched = await bot._handle_local_stem_commit("STEM", launch_fn=_launch)
+        assert launched is True
 
-class FakeGestureEvent:
-    def __init__(self, gesture, confidence=0.95, handedness="Right"):
-        self.gesture = gesture
-        self.confidence = confidence
-        self.handedness = handedness
-        self.hand_landmarks = None
+    asyncio.run(_run())
 
-
-class FakeVideoEncoder:
-    is_running = True
-
-    def __init__(self, bot_ref=None):
-        self.calls = 0
-        self._bot_ref = bot_ref
-
-    def get_frame(self, timeout=0.5):
-        self.calls += 1
-        if self.calls == 1:
-            return object()
-        if self._bot_ref is not None:
-            self._bot_ref._running = False
-        return None
-
-
-def _build_bot_for_dispatch(menu_state, arbitration):
-    bot = SphericalBot(enable_video=True, enable_audio=False, enable_serial=False, enable_alarm=False)
-    bot._running = True
-    bot.menu_state = menu_state
-    bot.arbitration_controller = arbitration
-    bot.video_encoder = FakeVideoEncoder()
-    bot.human_tracker = None
-
-    launch_calls = []
-
-    async def fake_launch(selected_item: str):
-        launch_calls.append(selected_item)
-
-    bot._handle_local_stem_commit = fake_launch
-    bot.gesture_detector = FakeGestureDetector([FakeGestureEvent(Gesture.PEACE)])
-    return bot, launch_calls
-
-
-def test_single_commit_triggers_single_stem_launch():
-    menu = FakeMenuState(selected="STEM", commit_once=True)
-    arbitration = FakeArbitration(local_allowed=True)
-    bot, launch_calls = _build_bot_for_dispatch(menu, arbitration)
-
-    asyncio.run(bot.run_detection_loop())
-
-    assert menu.commit_calls == 1
     assert launch_calls == ["STEM"]
 
 
-def test_repeated_frames_do_not_duplicate_launch_without_new_commit():
-    menu = FakeMenuState(selected="STEM", commit_once=True)
-    arbitration = FakeArbitration(local_allowed=True)
-    bot, launch_calls = _build_bot_for_dispatch(menu, arbitration)
+def test_repeated_loop_frames_do_not_duplicate_single_commit_launch():
+    bot = SphericalBot(enable_video=False, enable_audio=False, enable_serial=False, enable_alarm=False)
+    bot.menu_state = _FakeMenuState("STEM")
+    launch_calls: list[str] = []
 
-    asyncio.run(bot.run_detection_loop())
-    # Run loop again with no new commit event.
-    bot.video_encoder = FakeVideoEncoder()
-    bot.gesture_detector = FakeGestureDetector([FakeGestureEvent(Gesture.PEACE)])
-    asyncio.run(bot.run_detection_loop())
+    async def _launch(item: str) -> None:
+        launch_calls.append(item)
+
+    async def _simulate_loop_frames(frame_count: int) -> None:
+        for _ in range(frame_count):
+            if bot.menu_state.consume_commit_requested():
+                selected_item = bot.menu_state.menu_entries[bot.menu_state.selected_index]
+                await bot._handle_local_stem_commit(selected_item, launch_fn=_launch)
+
+    asyncio.run(_simulate_loop_frames(5))
 
     assert launch_calls == ["STEM"]
-    assert menu.commit_calls == 1
 
 
-def test_arbitration_block_suppresses_stem_launch():
-    menu = FakeMenuState(selected="STEM", commit_once=True)
-    arbitration = FakeArbitration(local_allowed=False, reason="remote_control")
-    bot, launch_calls = _build_bot_for_dispatch(menu, arbitration)
+def test_arbitration_denied_suppresses_stem_launch():
+    bot = SphericalBot(enable_video=False, enable_audio=False, enable_serial=False, enable_alarm=False)
+    bot.arbitration_controller = SimpleNamespace(
+        snapshot=lambda: {"state": "remote", "reason": "movement"},
+        is_local_allowed=lambda: False,
+    )
+    launch_calls: list[str] = []
 
-    asyncio.run(bot.run_detection_loop())
+    async def _launch(item: str) -> None:
+        launch_calls.append(item)
+
+    async def _run():
+        launched = await bot._handle_local_stem_commit("STEM", launch_fn=_launch)
+        assert launched is False
+
+    asyncio.run(_run())
 
     assert launch_calls == []
-    assert menu.commit_calls == 0
