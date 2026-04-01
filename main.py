@@ -369,7 +369,8 @@ class SphericalBot:
                         )
 
                         # Menu gesture handling (if menu is active)
-                        menu_active = bool(self.menu_state and self.menu_state.is_active)
+                        # The home menu is "active" only when a STEM session is NOT currently running.
+                        menu_active = bool(self.menu_state and self.menu_state.is_active and not self._stem_session_active)
                         if menu_active:
                             relevant_gestures = (
                                 Gesture.THUMBS_UP,
@@ -414,7 +415,15 @@ class SphericalBot:
                                             
                                     asyncio.create_task(do_sync())
 
-                        # Skip quiz gesture handling while menu is active
+                        # Handle manual exit from STEM session via OPEN_PALM
+                        if self._stem_session_active and gesture.gesture == Gesture.OPEN_PALM:
+                            logger.info("stem_session.exit_requested gesture=open_palm")
+                            from api.routes import quiz_stop
+                            # quiz_stop triggers _finalize_quiz_session -> _handle_stem_session_finished
+                            asyncio.create_task(quiz_stop())
+                            continue
+
+                        # Pass finger-count answers to quiz engine when menu is not active
                         if not menu_active and finger_count >= 1:
                             try:
                                 _engine = _quiz_state.get("engine")

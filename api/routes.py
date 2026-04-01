@@ -289,6 +289,180 @@ async def lifespan(app: FastAPI):
     logger.info("API server shutting down")
 
 
+# -----------------------------------------------------------------------
+# Quiz endpoints  (education/quiz_engine.py)
+# -----------------------------------------------------------------------
+
+async def _finalize_quiz_session() -> None:
+    """Clear active quiz engine and notify lifecycle listener when a session ends."""
+    _quiz_state["engine"] = None
+    on_finish = _quiz_state.get("on_finish")
+    if callable(on_finish):
+        try:
+            on_finish()
+        except Exception as exc:
+            logger.error("quiz.on_finish_callback_failed err=%s", exc)
+
+
+async def quiz_start(request: QuizStartRequest):
+    """Start an interactive MCQ quiz session.
+
+    Renders each question on the E-ink display and reads it aloud via
+    Edge TTS.  Answers are accepted by holding up fingers in front of
+    the camera (MediaPipe finger counting):
+      1 finger → A   2 fingers → B   3 fingers → C   4 fingers → D
+    """
+    from education.quiz_engine import QuizEngine, QuizQuestion, DEFAULT_QUESTIONS
+
+    img_processor = _app_state.get("image_processor")
+    serial_mgr = _app_state.get("serial_manager")
+    player = _app_state.get("audio_player")
+
+    # Stop any running quiz first
+    if _quiz_state["engine"] is not None:
+        await _quiz_state["engine"].stop()
+        _quiz_state["engine"] = None
+
+    # Build question list
+    if request.questions:
+        try:
+            questions = [
+                QuizQuestion(
+                    question=q["question"],
+                    options=q["options"],
+                    correct_index=q["correct_index"],
+                    title=q.get("title", "WonderBall STEM"),
+                )
+                for q in request.questions
+            ]
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(
+                status_code=422, detail=f"Invalid question format: {exc}"
+            )
+    else:
+        questions = list(DEFAULT_QUESTIONS)
+
+    _quiz_state["voice"] = request.voice
+
+    # --- TTS function (async, non-blocking) ---
+    async def _tts(text: str) -> None:
+        if not player:
+            return
+        try:
+            import edge_tts
+        except ImportError:
+            logger.warning("edge-tts not installed; quiz will run silently")
+            return
+        file_id = str(uuid.uuid4())
+        temp_path = TEMP_AUDIO_DIR / f"quiz_tts_{file_id}.mp3"
+        try:
+            communicate = edge_tts.Communicate(text, request.voice)
+            await communicate.save(str(temp_path))
+            # Play blocking in thread so TTS finishes before next step
+            await asyncio.to_thread(player.play_file, str(temp_path), True)
+        except Exception as exc:
+            logger.error(f"Quiz TTS error: {exc}")
+        finally:
+            temp_path.unlink(missing_ok=True)
+
+    # --- Display function ---
+    async def _display(question: str, options: list, title: str) -> None:
+        if not img_processor or not serial_mgr:
+            return
+        try:
+            from esp_serial.commands import CommandBuilder
+
+            packed = img_processor.render_lesson(
+                question=question, options=options, title=title
+            )
+            cmd = CommandBuilder.display_image(packed)
+            await serial_mgr.send_command_async(cmd)
+        except Exception as exc:
+            logger.error(f"Quiz display error: {exc}")
+
+    engine = QuizEngine(
+        questions=questions,
+        tts_fn=_tts,
+        display_fn=_display,
+        result_delay=request.result_delay,
+        shuffle=request.shuffle,
+    )
+    _quiz_state["engine"] = engine
+
+    async def _run_engine() -> None:
+        try:
+            await engine.start()
+        finally:
+            if _quiz_state.get("engine") is engine:
+                await _finalize_quiz_session()
+
+    # Fire quiz in background so this endpoint returns immediately
+    asyncio.create_task(_run_engine())
+
+    return {
+        "success": True,
+        "message": f"Quiz started with {len(questions)} questions",
+        "total_questions": len(questions),
+    }
+
+
+async def quiz_status():
+    """Return current quiz state and score."""
+    engine = _quiz_state.get("engine")
+    if engine is None:
+        return {"active": False, "state": "idle", "score": 0, "total": 0}
+
+    from education.quiz_engine import QuizState
+
+    q_index = engine._index
+    questions = engine._questions
+    current_q = questions[q_index] if q_index < len(questions) else None
+
+    return {
+        "active": engine.state not in (QuizState.IDLE, QuizState.COMPLETED),
+        "state": engine.state.value,
+        "question_index": q_index,
+        "total_questions": engine.total,
+        "score": engine.score,
+        "current_question": current_q.question if current_q else None,
+        "options": current_q.options if current_q else [],
+        "correct_answer_index": (
+            questions[q_index - 1].correct_index if q_index > 0 else None
+        ),
+        "last_answer_correct": engine._last_correct,
+    }
+
+
+async def quiz_inject_gesture(request: QuizGestureRequest):
+    """Manually inject a finger-count answer (useful for testing without camera).
+
+    finger_count: 1=A, 2=B, 3=C, 4=D
+    """
+    engine = _quiz_state.get("engine")
+    if engine is None:
+        raise HTTPException(status_code=404, detail="No active quiz session")
+
+    handled = engine.handle_finger_count(request.finger_count)
+    return {
+        "success": True,
+        "handled": handled,
+        "message": "Gesture processed"
+        if handled
+        else "Gesture ignored (not waiting for answer)",
+    }
+
+
+async def quiz_stop():
+    """Stop the current quiz session."""
+    engine = _quiz_state.get("engine")
+    if engine is None:
+        return {"success": True, "message": "No active quiz to stop"}
+    await engine.stop()
+    # Keep lifecycle behavior consistent with natural quiz completion.
+    await _finalize_quiz_session()
+    return {"success": True, "message": "Quiz stopped"}
+
+
 def create_app() -> FastAPI:
     """Create FastAPI application."""
     app = FastAPI(
@@ -1054,173 +1228,10 @@ def create_app() -> FastAPI:
     # Quiz endpoints  (education/quiz_engine.py)
     # -----------------------------------------------------------------------
 
-    async def _finalize_quiz_session() -> None:
-        """Clear active quiz engine and notify lifecycle listener when a session ends."""
-        _quiz_state["engine"] = None
-        on_finish = _quiz_state.get("on_finish")
-        if callable(on_finish):
-            try:
-                on_finish()
-            except Exception as exc:
-                logger.error("quiz.on_finish_callback_failed err=%s", exc)
-
-    @app.post("/api/quiz/start")
-    async def quiz_start(request: QuizStartRequest):
-        """Start an interactive MCQ quiz session.
-
-        Renders each question on the E-ink display and reads it aloud via
-        Edge TTS.  Answers are accepted by holding up fingers in front of
-        the camera (MediaPipe finger counting):
-          1 finger → A   2 fingers → B   3 fingers → C   4 fingers → D
-        """
-        from education.quiz_engine import QuizEngine, QuizQuestion, DEFAULT_QUESTIONS
-
-        img_processor = _app_state.get("image_processor")
-        serial_mgr = _app_state.get("serial_manager")
-        player = _app_state.get("audio_player")
-
-        # Stop any running quiz first
-        if _quiz_state["engine"] is not None:
-            await _quiz_state["engine"].stop()
-            _quiz_state["engine"] = None
-
-        # Build question list
-        if request.questions:
-            try:
-                questions = [
-                    QuizQuestion(
-                        question=q["question"],
-                        options=q["options"],
-                        correct_index=q["correct_index"],
-                        title=q.get("title", "WonderBall STEM"),
-                    )
-                    for q in request.questions
-                ]
-            except (KeyError, ValueError) as exc:
-                raise HTTPException(
-                    status_code=422, detail=f"Invalid question format: {exc}"
-                )
-        else:
-            questions = list(DEFAULT_QUESTIONS)
-
-        _quiz_state["voice"] = request.voice
-
-        # --- TTS function (async, non-blocking) ---
-        async def _tts(text: str) -> None:
-            if not player:
-                return
-            try:
-                import edge_tts
-            except ImportError:
-                logger.warning("edge-tts not installed; quiz will run silently")
-                return
-            file_id = str(uuid.uuid4())
-            temp_path = TEMP_AUDIO_DIR / f"quiz_tts_{file_id}.mp3"
-            try:
-                communicate = edge_tts.Communicate(text, request.voice)
-                await communicate.save(str(temp_path))
-                # Play blocking in thread so TTS finishes before next step
-                await asyncio.to_thread(player.play_file, str(temp_path), True)
-            except Exception as exc:
-                logger.error(f"Quiz TTS error: {exc}")
-            finally:
-                temp_path.unlink(missing_ok=True)
-
-        # --- Display function ---
-        async def _display(question: str, options: list, title: str) -> None:
-            if not img_processor or not serial_mgr:
-                return
-            try:
-                from esp_serial.commands import CommandBuilder
-
-                packed = img_processor.render_lesson(
-                    question=question, options=options, title=title
-                )
-                cmd = CommandBuilder.display_image(packed)
-                await serial_mgr.send_command_async(cmd)
-            except Exception as exc:
-                logger.error(f"Quiz display error: {exc}")
-
-        engine = QuizEngine(
-            questions=questions,
-            tts_fn=_tts,
-            display_fn=_display,
-            result_delay=request.result_delay,
-            shuffle=request.shuffle,
-        )
-        _quiz_state["engine"] = engine
-
-        async def _run_engine() -> None:
-            try:
-                await engine.start()
-            finally:
-                if _quiz_state.get("engine") is engine:
-                    await _finalize_quiz_session()
-
-        # Fire quiz in background so this endpoint returns immediately
-        asyncio.create_task(_run_engine())
-
-        return {
-            "success": True,
-            "message": f"Quiz started with {len(questions)} questions",
-            "total_questions": len(questions),
-        }
-
-    @app.get("/api/quiz/status")
-    async def quiz_status():
-        """Return current quiz state and score."""
-        engine = _quiz_state.get("engine")
-        if engine is None:
-            return {"active": False, "state": "idle", "score": 0, "total": 0}
-
-        from education.quiz_engine import QuizState
-
-        q_index = engine._index
-        questions = engine._questions
-        current_q = questions[q_index] if q_index < len(questions) else None
-
-        return {
-            "active": engine.state not in (QuizState.IDLE, QuizState.COMPLETED),
-            "state": engine.state.value,
-            "question_index": q_index,
-            "total_questions": engine.total,
-            "score": engine.score,
-            "current_question": current_q.question if current_q else None,
-            "options": current_q.options if current_q else [],
-            "correct_answer_index": (
-                questions[q_index - 1].correct_index if q_index > 0 else None
-            ),
-            "last_answer_correct": engine._last_correct,
-        }
-
-    @app.post("/api/quiz/gesture")
-    async def quiz_inject_gesture(request: QuizGestureRequest):
-        """Manually inject a finger-count answer (useful for testing without camera).
-
-        finger_count: 1=A, 2=B, 3=C, 4=D
-        """
-        engine = _quiz_state.get("engine")
-        if engine is None:
-            raise HTTPException(status_code=404, detail="No active quiz session")
-
-        handled = engine.handle_finger_count(request.finger_count)
-        return {
-            "success": True,
-            "handled": handled,
-            "message": "Gesture processed"
-            if handled
-            else "Gesture ignored (not waiting for answer)",
-        }
-
-    @app.post("/api/quiz/stop")
-    async def quiz_stop():
-        """Stop the current quiz session."""
-        engine = _quiz_state.get("engine")
-        if engine is None:
-            return {"success": True, "message": "No active quiz to stop"}
-        await engine.stop()
-        _quiz_state["engine"] = None
-        return {"success": True, "message": "Quiz stopped"}
+    app.post("/api/quiz/start")(quiz_start)
+    app.get("/api/quiz/status")(quiz_status)
+    app.post("/api/quiz/gesture")(quiz_inject_gesture)
+    app.post("/api/quiz/stop")(quiz_stop)
 
     # -----------------------------------------------------------------------
     # WebSocket endpoints
