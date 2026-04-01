@@ -203,6 +203,7 @@ _app_state = {
     "human_tracker": None,
     "bootstrap_state": None,
     "menu_state": None,
+    "arbitration": None,
 }
 
 # Active quiz session state (module-level so main.py detection loop can reach it)
@@ -255,6 +256,26 @@ def set_app_state(**kwargs) -> None:
 def get_app_state():
     """Get application state."""
     return _app_state
+
+
+def _preempt_remote_control(endpoint: str, reason: str):
+    """Preempt local control for remote endpoint execution."""
+    arbitration = _app_state.get("arbitration")
+    if arbitration is None:
+        return None
+
+    logger.info("api.preempt_remote endpoint=%s reason=%s", endpoint, reason)
+    arbitration.preempt_local(reason)
+    return arbitration
+
+
+def _release_remote_control(arbitration, endpoint: str) -> None:
+    """Release remote control and start cooldown when arbitration is available."""
+    if arbitration is None:
+        return
+
+    logger.info("api.release_remote endpoint=%s", endpoint)
+    arbitration.release_remote()
 
 
 @asynccontextmanager
@@ -323,6 +344,25 @@ def create_app() -> FastAPI:
         """Latest gesture detection result (poll this for debugging)."""
         return _gesture_state
 
+    @app.get("/api/arbitration/status")
+    async def get_arbitration_status():
+        """Get current remote/local arbitration status snapshot."""
+        arbitration = _app_state.get("arbitration")
+        if not arbitration:
+            raise HTTPException(status_code=503, detail="Arbitration not available")
+
+        return arbitration.snapshot()
+
+    @app.post("/api/arbitration/force-local")
+    async def force_local_control():
+        """Force arbitration back to local control (testing/debugging)."""
+        arbitration = _app_state.get("arbitration")
+        if not arbitration:
+            raise HTTPException(status_code=503, detail="Arbitration not available")
+
+        arbitration.force_local()
+        return {"status": "local", "message": "Forced to local control"}
+
     # System status
     @app.get("/api/status", response_model=StatusResponse)
     async def get_status():
@@ -353,17 +393,21 @@ def create_app() -> FastAPI:
         from esp_serial.commands import CommandBuilder
         from esp_serial.protocol import ResponseStatus
 
-        cmd = CommandBuilder.motor_velocity(
-            request.left_speed,
-            request.right_speed,
-            request.duration_ms,
-        )
-        response = await serial_mgr.send_command_async(cmd)
+        arbitration = _preempt_remote_control(endpoint="/api/movement/move", reason="movement")
+        try:
+            cmd = CommandBuilder.motor_velocity(
+                request.left_speed,
+                request.right_speed,
+                request.duration_ms,
+            )
+            response = await serial_mgr.send_command_async(cmd)
 
-        return MovementResponse(
-            success=response.status == ResponseStatus.OK,
-            message=response.message or response.status.value,
-        )
+            return MovementResponse(
+                success=response.status == ResponseStatus.OK,
+                message=response.message or response.status.value,
+            )
+        finally:
+            _release_remote_control(arbitration, endpoint="/api/movement/move")
 
     @app.post("/api/movement/stop", response_model=MovementResponse)
     async def stop():
@@ -375,13 +419,17 @@ def create_app() -> FastAPI:
         from esp_serial.commands import CommandBuilder
         from esp_serial.protocol import ResponseStatus
 
-        cmd = CommandBuilder.motor_stop()
-        response = await serial_mgr.send_command_async(cmd)
+        arbitration = _preempt_remote_control(endpoint="/api/movement/stop", reason="movement_stop")
+        try:
+            cmd = CommandBuilder.motor_stop()
+            response = await serial_mgr.send_command_async(cmd)
 
-        return MovementResponse(
-            success=response.status == ResponseStatus.OK,
-            message=response.message or "Stopped",
-        )
+            return MovementResponse(
+                success=response.status == ResponseStatus.OK,
+                message=response.message or "Stopped",
+            )
+        finally:
+            _release_remote_control(arbitration, endpoint="/api/movement/stop")
 
     # Display control
     @app.post("/api/display/update", response_model=DisplayResponse)
@@ -397,49 +445,53 @@ def create_app() -> FastAPI:
         from esp_serial.protocol import ResponseStatus
         import base64
 
+        arbitration = _preempt_remote_control(endpoint="/api/display/update", reason="display_update")
         try:
-            if request.image_base64:
-                # Decode base64 - this could be either:
-                # 1. Raw binary 1-bit packed data (from frontend dithering)
-                # 2. Base64 encoded image file (PNG/JPG)
-                image_bytes = base64.b64decode(request.image_base64)
+            try:
+                if request.image_base64:
+                    # Decode base64 - this could be either:
+                    # 1. Raw binary 1-bit packed data (from frontend dithering)
+                    # 2. Base64 encoded image file (PNG/JPG)
+                    image_bytes = base64.b64decode(request.image_base64)
 
-                # Check if it's already the correct size (15000 bytes = pre-processed)
-                if len(image_bytes) == 15000:
-                    # Already processed 1-bit packed data
-                    packed = image_bytes
-                    logger.info(f"Using pre-processed image data: {len(packed)} bytes")
+                    # Check if it's already the correct size (15000 bytes = pre-processed)
+                    if len(image_bytes) == 15000:
+                        # Already processed 1-bit packed data
+                        packed = image_bytes
+                        logger.info(f"Using pre-processed image data: {len(packed)} bytes")
+                    else:
+                        # Try to open as image file
+                        try:
+                            from io import BytesIO
+                            from PIL import Image
+
+                            img = Image.open(BytesIO(image_bytes))
+                            packed = img_processor.process(img)
+                            logger.info(f"Processed image file: {len(packed)} bytes")
+                        except Exception as img_err:
+                            logger.error(f"Failed to open as image: {img_err}")
+                            raise HTTPException(
+                                status_code=400, detail=f"Invalid image data: {img_err}"
+                            )
+                elif request.text:
+                    packed = img_processor.process_text(request.text)
+                elif request.pattern:
+                    packed = img_processor.create_pattern(request.pattern)
                 else:
-                    # Try to open as image file
-                    try:
-                        from io import BytesIO
-                        from PIL import Image
+                    raise HTTPException(status_code=400, detail="No image data provided")
 
-                        img = Image.open(BytesIO(image_bytes))
-                        packed = img_processor.process(img)
-                        logger.info(f"Processed image file: {len(packed)} bytes")
-                    except Exception as img_err:
-                        logger.error(f"Failed to open as image: {img_err}")
-                        raise HTTPException(
-                            status_code=400, detail=f"Invalid image data: {img_err}"
-                        )
-            elif request.text:
-                packed = img_processor.process_text(request.text)
-            elif request.pattern:
-                packed = img_processor.create_pattern(request.pattern)
-            else:
-                raise HTTPException(status_code=400, detail="No image data provided")
+                cmd = CommandBuilder.display_image(packed)
+                response = await serial_mgr.send_command_async(cmd)
 
-            cmd = CommandBuilder.display_image(packed)
-            response = await serial_mgr.send_command_async(cmd)
-
-            return DisplayResponse(
-                success=response.status == ResponseStatus.OK,
-                message=response.message or "Display updated",
-            )
-        except Exception as e:
-            logger.error(f"Display update error: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
+                return DisplayResponse(
+                    success=response.status == ResponseStatus.OK,
+                    message=response.message or "Display updated",
+                )
+            except Exception as e:
+                logger.error(f"Display update error: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+        finally:
+            _release_remote_control(arbitration, endpoint="/api/display/update")
 
     @app.post("/api/display/clear", response_model=DisplayResponse)
     async def clear_display():
@@ -451,13 +503,17 @@ def create_app() -> FastAPI:
         from esp_serial.commands import CommandBuilder
         from esp_serial.protocol import ResponseStatus
 
-        cmd = CommandBuilder.display_clear()
-        response = await serial_mgr.send_command_async(cmd)
+        arbitration = _preempt_remote_control(endpoint="/api/display/clear", reason="display_clear")
+        try:
+            cmd = CommandBuilder.display_clear()
+            response = await serial_mgr.send_command_async(cmd)
 
-        return DisplayResponse(
-            success=response.status == ResponseStatus.OK,
-            message=response.message or "Display cleared",
-        )
+            return DisplayResponse(
+                success=response.status == ResponseStatus.OK,
+                message=response.message or "Display cleared",
+            )
+        finally:
+            _release_remote_control(arbitration, endpoint="/api/display/clear")
 
     @app.post("/api/display/lesson", response_model=DisplayResponse)
     async def display_lesson(request: DisplayLessonRequest):
@@ -475,21 +531,25 @@ def create_app() -> FastAPI:
         from esp_serial.commands import CommandBuilder
         from esp_serial.protocol import ResponseStatus
 
+        arbitration = _preempt_remote_control(endpoint="/api/display/lesson", reason="display_lesson")
         try:
-            packed = img_processor.render_lesson(
-                question=request.question,
-                options=request.options,
-                title=request.title,
-            )
-            cmd = CommandBuilder.display_image(packed)
-            response = await serial_mgr.send_command_async(cmd)
-            return DisplayResponse(
-                success=response.status == ResponseStatus.OK,
-                message=response.message or "Lesson displayed",
-            )
-        except Exception as e:
-            logger.error(f"Lesson display error: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
+            try:
+                packed = img_processor.render_lesson(
+                    question=request.question,
+                    options=request.options,
+                    title=request.title,
+                )
+                cmd = CommandBuilder.display_image(packed)
+                response = await serial_mgr.send_command_async(cmd)
+                return DisplayResponse(
+                    success=response.status == ResponseStatus.OK,
+                    message=response.message or "Lesson displayed",
+                )
+            except Exception as e:
+                logger.error(f"Lesson display error: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+        finally:
+            _release_remote_control(arbitration, endpoint="/api/display/lesson")
 
     # Video streaming
     @app.get("/api/stream/video")

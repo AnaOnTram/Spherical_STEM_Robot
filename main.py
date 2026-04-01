@@ -18,7 +18,9 @@ from config import (
     BOOTSTRAP_READINESS_TIMEOUT_SECONDS,
     BOOTSTRAP_RENDER_TIMEOUT_SECONDS,
     BOOTSTRAP_REQUIRED_COMPONENTS,
+    REMOTE_PREEMPT_COOLDOWN_SECONDS,
 )
+from local_ui.arbitration import ArbitrationController
 from local_ui.bootstrap import BootstrapState, run_bootstrap_flow
 
 # Configure logging
@@ -59,6 +61,7 @@ class SphericalBot:
         self.human_tracker = None
         self.yamnet_classifier = None
         self.menu_state = None
+        self.arbitration_controller = None
 
         self._running = False
         self._tasks: list[asyncio.Task] = []
@@ -87,6 +90,15 @@ class SphericalBot:
 
                 if not self.video_encoder.start():
                     logger.warning("Video capture failed to start")
+
+            # Initialize remote/local arbitration (available even if serial/video are disabled)
+            try:
+                self.arbitration_controller = ArbitrationController(
+                    cooldown_seconds=REMOTE_PREEMPT_COOLDOWN_SECONDS,
+                )
+            except Exception as exc:
+                logger.error("arbitration.initialization_failed: %s", exc)
+                self.arbitration_controller = None
 
             # Initialize audio
             if self.enable_audio:
@@ -153,6 +165,7 @@ class SphericalBot:
             human_tracker=self.human_tracker,
             bootstrap_state=self.bootstrap_state,
             menu_state=self.menu_state,
+            arbitration=self.arbitration_controller,
         )
 
     async def _publish_boot_home_menu(self, image_payload: bytes):
@@ -223,9 +236,10 @@ class SphericalBot:
                 audio_player=self.audio_player,
                 serial_manager=self.serial_manager,
                 image_processor=self.image_processor,
+                arbitration=self.arbitration_controller,
             )
             logger.info("menu.initialized entries=%s", BASELINE_HOME_MENU_ENTRIES)
-            set_app_state(menu_state=self.menu_state)
+            set_app_state(menu_state=self.menu_state, arbitration=self.arbitration_controller)
         except Exception as e:
             logger.error(f"menu.initialization_failed: {e}")
             self.menu_state = None

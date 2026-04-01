@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from config import (
     MENU_AUDIO_CUE_PATH,
@@ -25,6 +25,9 @@ from config import (
     MENU_VICTORY_HOLD_SECONDS,
 )
 from cv_engine.gesture_detector import Gesture
+
+if TYPE_CHECKING:
+    from local_ui.arbitration import ArbitrationController
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +68,7 @@ class MenuStateMachine:
         audio_player: Any = None,
         serial_manager: Any = None,
         image_processor: Any = None,
+        arbitration: Optional["ArbitrationController"] = None,
         confirm_audio_path: str = MENU_AUDIO_CUE_PATH,
     ):
         if not menu_entries:
@@ -79,6 +83,7 @@ class MenuStateMachine:
         self._audio_player = audio_player
         self._serial_manager = serial_manager
         self._image_processor = image_processor
+        self._arbitration = arbitration
         self._confirm_audio_path = confirm_audio_path
 
         # Current state
@@ -138,6 +143,10 @@ class MenuStateMachine:
 
         Returns True if the gesture caused a state transition or action.
         """
+        if self._arbitration and not self._arbitration.is_local_allowed():
+            logger.debug("menu.gesture_blocked state=%s", self._arbitration.snapshot()["state"])
+            return False
+
         if self._locked and self._lock_start_time is not None:
             elapsed = time.monotonic() - self._lock_start_time
             if elapsed >= self._lock_timeout_seconds:
