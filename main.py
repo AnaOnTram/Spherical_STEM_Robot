@@ -5,7 +5,7 @@ import asyncio
 import logging
 import signal
 import sys
-from typing import Optional
+from typing import Awaitable, Callable, Optional
 
 import numpy as np
 import uvicorn
@@ -229,6 +229,60 @@ class SphericalBot:
 
         return self.bootstrap_state
 
+    async def _launch_stem_education(self):
+        """Launch STEM education flow using the existing quiz API engine path."""
+        from api.routes import QuizStartRequest, quiz_start
+
+        await quiz_start(QuizStartRequest())
+
+    async def _handle_local_stem_commit(
+        self,
+        selected_item: str,
+        launch_fn: Optional[Callable[[str], Awaitable[None]]] = None,
+    ) -> bool:
+        """Dispatch one-shot local STEM commit with arbitration-aware logging."""
+        normalized = selected_item.strip().lower()
+        if normalized != "stem":
+            logger.info(
+                "menu.stem_dispatch result=ignored_non_stem item=%s",
+                selected_item,
+            )
+            return False
+
+        arbitration_state = "none"
+        arbitration_reason = "none"
+        local_allowed = True
+        if self.arbitration_controller is not None:
+            snapshot = self.arbitration_controller.snapshot()
+            arbitration_state = snapshot.get("state", "unknown")
+            arbitration_reason = snapshot.get("reason", "unknown")
+            local_allowed = self.arbitration_controller.is_local_allowed()
+
+        if not local_allowed:
+            logger.info(
+                "menu.stem_dispatch result=blocked_by_arbitration item=%s arbitration_state=%s arbitration_reason=%s",
+                selected_item,
+                arbitration_state,
+                arbitration_reason,
+            )
+            return False
+
+        launch = launch_fn
+        if launch is None:
+            async def _default_launch(_: str) -> None:
+                await self._launch_stem_education()
+
+            launch = _default_launch
+
+        await launch(selected_item)
+        logger.info(
+            "menu.stem_dispatch result=launched item=%s arbitration_state=%s arbitration_reason=%s",
+            selected_item,
+            arbitration_state,
+            arbitration_reason,
+        )
+        return True
+
     def _initialize_menu(self):
         """Initialize menu state machine after bootstrap completes."""
         from local_ui.bootstrap import BASELINE_HOME_MENU_ENTRIES
@@ -314,14 +368,18 @@ class SphericalBot:
                                 )
 
                                 if self.menu_state.consume_commit_requested():
-                                    async def do_commit():
-                                        self._is_display_updating = True
-                                        try:
-                                            await self.menu_state.commit_selection()
-                                        finally:
-                                            self._is_display_updating = False
-                                    
-                                    asyncio.create_task(do_commit())
+                                    selected_item = self.menu_state.menu_entries[self.menu_state.selected_index]
+                                    if selected_item.strip().lower() == "stem":
+                                        asyncio.create_task(self._handle_local_stem_commit(selected_item))
+                                    else:
+                                        async def do_commit():
+                                            self._is_display_updating = True
+                                            try:
+                                                await self.menu_state.commit_selection()
+                                            finally:
+                                                self._is_display_updating = False
+
+                                        asyncio.create_task(do_commit())
                                     
                                 elif self.menu_state.consume_navigation_requested() or self._pending_display_update:
                                     if self._is_display_updating:
