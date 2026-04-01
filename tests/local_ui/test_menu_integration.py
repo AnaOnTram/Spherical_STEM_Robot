@@ -60,10 +60,10 @@ def test_menu_commit_flow_navigate_hold_confirm_calls_render_serial_audio(tmp_pa
         confirm_audio_path=str(cue_path),
     )
 
-    # Navigate once: index 0 -> 1
+    # Navigate once with thumbs-up (mapped to previous): index 0 -> 3
     assert not menu.handle_gesture(Gesture.THUMBS_UP, 0.9)
     assert menu.handle_gesture(Gesture.THUMBS_UP, 0.9)
-    assert menu.selected_index == 1
+    assert menu.selected_index == 3
     assert menu.state == MenuState.NAVIGATING
 
     # Start confirming and hold until commit request is raised
@@ -84,7 +84,7 @@ def test_menu_commit_flow_navigate_hold_confirm_calls_render_serial_audio(tmp_pa
     assert menu.state == MenuState.NAVIGATING
     assert menu.locked is False
 
-    assert image_processor.calls == [(BASELINE_HOME_MENU_ENTRIES, 1)]
+    assert image_processor.calls == [(BASELINE_HOME_MENU_ENTRIES, 3)]
     assert len(serial_manager.calls) == 1
     assert audio_player.calls == [(str(cue_path), False)]
 
@@ -106,7 +106,7 @@ def test_menu_status_api_returns_snapshot_fields():
 
     payload = response.json()
     assert payload["state"] == "navigating"
-    assert payload["selected_index"] == 1
+    assert payload["selected_index"] == 3
     assert payload["menu_entries"] == list(BASELINE_HOME_MENU_ENTRIES)
     assert payload["locked"] is False
     assert 0.0 <= payload["victory_hold_progress"] <= 1.0

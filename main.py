@@ -5,6 +5,7 @@ import asyncio
 import logging
 import signal
 import sys
+import time
 from typing import Awaitable, Callable, Optional
 
 import numpy as np
@@ -18,6 +19,11 @@ from config import (
     BOOTSTRAP_READINESS_TIMEOUT_SECONDS,
     BOOTSTRAP_RENDER_TIMEOUT_SECONDS,
     BOOTSTRAP_REQUIRED_COMPONENTS,
+    MENU_DEBOUNCE_FRAMES,
+    MENU_DISPLAY_COOLDOWN_SECONDS,
+    MENU_GESTURE_CONFIDENCE_THRESHOLD,
+    MENU_NAV_SYNC_SETTLE_SECONDS,
+    MENU_VICTORY_HOLD_SECONDS,
     REMOTE_PREEMPT_COOLDOWN_SECONDS,
 )
 from local_ui.arbitration import ArbitrationController
@@ -67,6 +73,23 @@ class SphericalBot:
         self._tasks: list[asyncio.Task] = []
         self.bootstrap_state = BootstrapState()
         self._stem_session_active = False
+        self._throttled_log_timestamps: dict[str, float] = {}
+
+    def _log_throttled(
+        self,
+        key: str,
+        interval_s: float,
+        message: str,
+        *args,
+        level: int = logging.INFO,
+    ) -> None:
+        """Emit a rate-limited log line to keep gesture diagnostics readable."""
+        now = time.monotonic()
+        last = self._throttled_log_timestamps.get(key, 0.0)
+        if now - last < interval_s:
+            return
+        self._throttled_log_timestamps[key] = now
+        logger.log(level, message, *args)
 
     def initialize(self) -> bool:
         """Initialize all components."""
@@ -314,12 +337,22 @@ class SphericalBot:
                 arbitration=self.arbitration_controller,
             )
             logger.info("menu.initialized entries=%s", BASELINE_HOME_MENU_ENTRIES)
+            logger.info(
+                "menu.policy confidence_threshold=%.2f debounce_frames=%d victory_hold_seconds=%.2f nav_settle_seconds=%.2f display_cooldown_seconds=%.2f",
+                MENU_GESTURE_CONFIDENCE_THRESHOLD,
+                MENU_DEBOUNCE_FRAMES,
+                MENU_VICTORY_HOLD_SECONDS,
+                MENU_NAV_SYNC_SETTLE_SECONDS,
+                MENU_DISPLAY_COOLDOWN_SECONDS,
+            )
             set_app_state(menu_state=self.menu_state, arbitration=self.arbitration_controller, on_quiz_finished=self._handle_stem_session_finished)
         except Exception as e:
             logger.error(f"menu.initialization_failed: {e}")
             self.menu_state = None
         self._is_display_updating = False
         self._pending_display_update = False
+        self._last_nav_time: Optional[float] = None
+        self._last_sync_time: Optional[float] = None  # when the last sync command completed
 
     async def run_detection_loop(self):
         """Run CV detection loop."""
@@ -336,6 +369,15 @@ class SphericalBot:
                 frame = self.video_encoder.get_frame(timeout=0.5)
                 if frame is None:
                     continue
+
+                # Evaluate once per frame — used both in gesture loop and pending-sync check below.
+                quiz_active = _quiz_state.get("engine") is not None
+                menu_active = bool(
+                    self.menu_state
+                    and self.menu_state.is_active
+                    and not self._stem_session_active
+                    and not quiz_active
+                )
 
                 # Gesture detection
                 if self.gesture_detector:
@@ -358,6 +400,23 @@ class SphericalBot:
                             except Exception:
                                 pass
 
+                        if gesture.gesture != Gesture.NONE or finger_count >= 1:
+                            self._log_throttled(
+                                "gesture.detected",
+                                0.35,
+                                (
+                                    "gesture.detected name=%s conf=%.2f handedness=%s "
+                                    "fingers=%d menu_active=%s stem_active=%s quiz_active=%s"
+                                ),
+                                gesture.gesture.value,
+                                gesture.confidence,
+                                gesture.handedness,
+                                finger_count,
+                                menu_active,
+                                self._stem_session_active,
+                                quiz_active,
+                            )
+
                         update_gesture_state(
                             gesture.gesture.value,
                             gesture.confidence,
@@ -369,8 +428,6 @@ class SphericalBot:
                         )
 
                         # Menu gesture handling (if menu is active)
-                        # The home menu is "active" only when a STEM session is NOT currently running.
-                        menu_active = bool(self.menu_state and self.menu_state.is_active and not self._stem_session_active)
                         if menu_active:
                             relevant_gestures = (
                                 Gesture.THUMBS_UP,
@@ -379,9 +436,43 @@ class SphericalBot:
                                 Gesture.OPEN_PALM,
                             )
                             if gesture.gesture in relevant_gestures:
-                                self.menu_state.handle_gesture(
+                                if gesture.gesture in (Gesture.THUMBS_UP, Gesture.THUMBS_DOWN) and (
+                                    self._pending_display_update or self._is_display_updating
+                                ):
+                                    self._log_throttled(
+                                        "gesture.menu.nav.deferred",
+                                        0.5,
+                                        (
+                                            "gesture.ignored target=menu reason=display_update_pending "
+                                            "gesture=%s selected_index=%d pending=%s syncing=%s"
+                                        ),
+                                        gesture.gesture.value,
+                                        self.menu_state.selected_index if self.menu_state else -1,
+                                        self._pending_display_update,
+                                        self._is_display_updating,
+                                    )
+                                    continue
+
+                                handled = self.menu_state.handle_gesture(
                                     gesture.gesture,
                                     gesture.confidence,
+                                )
+                                menu_state_name = self.menu_state.state.value if self.menu_state else "none"
+                                menu_locked = self.menu_state.locked if self.menu_state else False
+                                selected_idx = self.menu_state.selected_index if self.menu_state else -1
+                                self._log_throttled(
+                                    "gesture.route.menu",
+                                    0.25,
+                                    (
+                                        "gesture.route target=menu gesture=%s conf=%.2f handled=%s "
+                                        "menu_state=%s locked=%s selected_index=%d"
+                                    ),
+                                    gesture.gesture.value,
+                                    gesture.confidence,
+                                    handled,
+                                    menu_state_name,
+                                    menu_locked,
+                                    selected_idx,
                                 )
 
                                 if self.menu_state.consume_commit_requested():
@@ -397,40 +488,98 @@ class SphericalBot:
                                                 self._is_display_updating = False
 
                                         asyncio.create_task(do_commit())
-                                    
-                                elif self.menu_state.consume_navigation_requested() or self._pending_display_update:
-                                    if self._is_display_updating:
-                                        self._pending_display_update = True
-                                        continue
 
-                                    async def do_sync():
-                                        self._is_display_updating = True
-                                        self._pending_display_update = False
-                                        try:
-                                            await self.menu_state.sync_display()
-                                        finally:
-                                            self._is_display_updating = False
-                                            # If another update became pending while we were sync'ing,
-                                            # it will be picked up in the next loop iteration.
-                                            
-                                    asyncio.create_task(do_sync())
+                                elif self.menu_state.consume_navigation_requested():
+                                    # Record time of last nav; the display sync is dispatched
+                                    # after the settle delay below (outside the gesture loop)
+                                    # so it fires even when the user has lowered their hand.
+                                    self._pending_display_update = True
+                                    self._last_nav_time = time.monotonic()
+                            elif gesture.gesture != Gesture.NONE:
+                                self._log_throttled(
+                                    "gesture.menu.ignored",
+                                    1.0,
+                                    "gesture.ignored target=menu reason=unsupported gesture=%s conf=%.2f",
+                                    gesture.gesture.value,
+                                    gesture.confidence,
+                                )
 
                         # Handle manual exit from STEM session via OPEN_PALM
-                        if self._stem_session_active and gesture.gesture == Gesture.OPEN_PALM:
+                        if gesture.gesture == Gesture.OPEN_PALM and (self._stem_session_active or quiz_active):
                             logger.info("stem_session.exit_requested gesture=open_palm")
                             from api.routes import quiz_stop
                             # quiz_stop triggers _finalize_quiz_session -> _handle_stem_session_finished
                             asyncio.create_task(quiz_stop())
                             continue
 
-                        # Pass finger-count answers to quiz engine when menu is not active
-                        if not menu_active and finger_count >= 1:
+                        # Pass finger-count answers to quiz engine when a quiz is active.
+                        if (self._stem_session_active or quiz_active) and finger_count >= 1:
                             try:
                                 _engine = _quiz_state.get("engine")
                                 if _engine is not None:
-                                    _engine.handle_finger_count(finger_count)
+                                    handled = _engine.handle_finger_count(finger_count)
+                                    self._log_throttled(
+                                        "gesture.route.quiz",
+                                        0.25,
+                                        (
+                                            "gesture.route target=quiz fingers=%d handled=%s "
+                                            "engine=%s stem_active=%s quiz_active=%s"
+                                        ),
+                                        finger_count,
+                                        handled,
+                                        type(_engine).__name__,
+                                        self._stem_session_active,
+                                        quiz_active,
+                                    )
+                                else:
+                                    self._log_throttled(
+                                        "gesture.quiz.no_engine",
+                                        1.0,
+                                        (
+                                            "gesture.ignored target=quiz reason=no_active_engine "
+                                            "fingers=%d stem_active=%s quiz_active=%s"
+                                        ),
+                                        finger_count,
+                                        self._stem_session_active,
+                                        quiz_active,
+                                        level=logging.WARNING,
+                                    )
                             except Exception:
                                 pass
+
+                # Dispatch pending display sync once navigation has settled.
+                # Runs every frame — not gated on gesture presence — so the refresh
+                # fires even after the user has lowered their hand.
+                # Also enforces a minimum cooldown between syncs so back-to-back
+                # commands don't corrupt the e-ink mid-refresh.
+                if (
+                    menu_active
+                    and self._pending_display_update
+                    and not self._is_display_updating
+                    and self._last_nav_time is not None
+                    and time.monotonic() - self._last_nav_time >= MENU_NAV_SYNC_SETTLE_SECONDS
+                    and (
+                        self._last_sync_time is None
+                        or time.monotonic() - self._last_sync_time >= MENU_DISPLAY_COOLDOWN_SECONDS
+                    )
+                ):
+                    self._pending_display_update = False
+                    self._last_nav_time = None
+
+                    async def do_sync():
+                        self._is_display_updating = True
+                        idx = self.menu_state.selected_index if self.menu_state else -1
+                        logger.info("display_sync.start index=%d", idx)
+                        try:
+                            await self.menu_state.sync_display()
+                            logger.info("display_sync.done index=%d", idx)
+                        except Exception as exc:
+                            logger.error("display_sync.error index=%d err=%s", idx, exc)
+                        finally:
+                            self._is_display_updating = False
+                            self._last_sync_time = time.monotonic()
+
+                    asyncio.create_task(do_sync())
 
                 # Human tracking (detection only — no WebSocket broadcast)
                 if self.human_tracker:

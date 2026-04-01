@@ -39,6 +39,7 @@ Please refers to this [documentation](framework.md)
 * Clone the repository to your Pi5 or equavalent SBC (ensure serial com has been enabled)
 * Prepare the python environment
 ```bash
+sudo apt install espeak-ng # for local tts only
 conda create -n bot python=3.12 -y
 conda activate bot
 ```

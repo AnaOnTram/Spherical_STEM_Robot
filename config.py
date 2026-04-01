@@ -79,9 +79,11 @@ BOOTSTRAP_MAX_ATTEMPTS = 1
 
 # Menu navigation and gesture confirmation (S02)
 MENU_VICTORY_HOLD_SECONDS = 5.0
-MENU_DEBOUNCE_FRAMES = 15
+MENU_DEBOUNCE_FRAMES = 4
+MENU_NAV_SYNC_SETTLE_SECONDS = 0.4   # wait this long after last nav gesture before refreshing display
+MENU_DISPLAY_COOLDOWN_SECONDS = 8.0  # minimum gap between two display syncs (e-ink full-refresh ~6-7s)
 MENU_DISPLAY_LOCK_TIMEOUT_SECONDS = 12.0
-MENU_GESTURE_CONFIDENCE_THRESHOLD = 0.7
+MENU_GESTURE_CONFIDENCE_THRESHOLD = 0.6
 MENU_AUDIO_CUE_TEXT = "Confirmed"
 MENU_AUDIO_CUE_VOICE = "en-US-AriaNeural"
 MENU_AUDIO_CUE_PATH = "/tmp/menu_confirm.mp3"

@@ -51,18 +51,18 @@ class TestNavigationDebouncing:
         # Second frame (debounce_frames=2) should accept
         result = menu.handle_gesture(Gesture.THUMBS_UP, confidence=0.9)
         assert menu.state == MenuState.NAVIGATING
-        assert menu.selected_index == 1
+        assert menu.selected_index == 3
         assert result
 
     def test_thumb_down_requires_debounce_frames(self, menu):
-        # Set to second item first
+        # Set to previous item first
         menu.handle_gesture(Gesture.THUMBS_UP, confidence=0.9)
         menu.handle_gesture(Gesture.THUMBS_UP, confidence=0.9)
-        assert menu.selected_index == 1
+        assert menu.selected_index == 3
 
         # Thumb down once (not enough)
         result = menu.handle_gesture(Gesture.THUMBS_DOWN, confidence=0.9)
-        assert menu.selected_index == 1
+        assert menu.selected_index == 3
         assert not result
 
         # Second time should accept
@@ -78,30 +78,30 @@ class TestNavigationDebouncing:
         # Switch to thumb down before completing debounce
         menu.handle_gesture(Gesture.THUMBS_DOWN, confidence=0.9)
         menu.handle_gesture(Gesture.THUMBS_DOWN, confidence=0.9)
-        # Should navigate down (wrapping to last item)
-        assert menu.selected_index == 3  # Wrapped to last
+        # Should navigate to next item
+        assert menu.selected_index == 1
 
     def test_navigation_wraps_around(self, menu):
-        # Navigate to last item (index 3)
+        # Navigate forward to last item (index 3)
         for _ in range(2):  # debounce_frames=2 per gesture
-            menu.handle_gesture(Gesture.THUMBS_UP, confidence=0.9)
+            menu.handle_gesture(Gesture.THUMBS_DOWN, confidence=0.9)
+        for _ in range(2):  # debounce_frames=2 per gesture
+            menu.handle_gesture(Gesture.THUMBS_DOWN, confidence=0.9)
         for _ in range(2):
-            menu.handle_gesture(Gesture.THUMBS_UP, confidence=0.9)
-        for _ in range(2):
-            menu.handle_gesture(Gesture.THUMBS_UP, confidence=0.9)
+            menu.handle_gesture(Gesture.THUMBS_DOWN, confidence=0.9)
         assert menu.selected_index == 3
 
-        # Next should wrap to 0
+        # One more "down/next" should wrap to 0
         for _ in range(2):
-            menu.handle_gesture(Gesture.THUMBS_UP, confidence=0.9)
+            menu.handle_gesture(Gesture.THUMBS_DOWN, confidence=0.9)
         assert menu.selected_index == 0
 
     def test_navigation_wraps_backwards(self, menu):
         assert menu.selected_index == 0
 
-        # Go back from 0 should wrap to last (3)
+        # Go up/previous from 0 should wrap to last (3)
         for _ in range(2):
-            menu.handle_gesture(Gesture.THUMBS_DOWN, confidence=0.9)
+            menu.handle_gesture(Gesture.THUMBS_UP, confidence=0.9)
         assert menu.selected_index == 3
 
 
@@ -144,10 +144,12 @@ class TestVictoryHold:
         assert menu.state == MenuState.CONFIRMING
 
         # Low confidence should reset hold
-        menu.handle_gesture(Gesture.PEACE, confidence=0.5)  # Below 0.7 threshold
+        result = menu.handle_gesture(Gesture.PEACE, confidence=0.5)  # Below 0.7 threshold
         snapshot = menu.snapshot()
         # Timer should be reset (progress back to 0)
         assert snapshot.victory_hold_progress == 0.0
+        assert menu.state == MenuState.NAVIGATING
+        assert result
 
     def test_different_gesture_resets_hold(self, menu):
         # Start Victory hold
@@ -160,6 +162,7 @@ class TestVictoryHold:
         menu.handle_gesture(Gesture.THUMBS_UP, confidence=0.9)
         snapshot = menu.snapshot()
         assert snapshot.victory_hold_progress == 0.0
+        assert menu.state == MenuState.NAVIGATING
 
 
 class TestOpenPalmCancel:
@@ -202,7 +205,7 @@ class TestInputGating:
         # Get to NAVIGATING
         for _ in range(2):
             menu.handle_gesture(Gesture.THUMBS_UP, confidence=0.9)
-        assert menu.selected_index == 1
+        assert menu.selected_index == 3
 
         # Lock
         menu.lock()
@@ -212,7 +215,7 @@ class TestInputGating:
         for gesture in [Gesture.THUMBS_UP, Gesture.THUMBS_DOWN, Gesture.PEACE, Gesture.OPEN_PALM]:
             result = menu.handle_gesture(gesture, confidence=0.9)
             assert not result
-            assert menu.selected_index == 1  # No change
+            assert menu.selected_index == 3  # No change
 
     def test_unlock_returns_to_navigating(self, menu):
         # Get to LOCKED state via commit

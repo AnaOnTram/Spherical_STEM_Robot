@@ -1,7 +1,7 @@
 """Menu state machine with gesture navigation, Victory hold confirm, and input gating.
 
 Handles:
-- Navigation via Thumb Up (next) / Thumb Down (previous) with debouncing
+- Navigation via Thumb Up (previous/up) / Thumb Down (next/down) with debouncing
 - Confirmation via Victory gesture held for >=3s
 - Cancel/back via Open Palm gesture
 - Input gating during display refresh (prevents hidden actions)
@@ -178,12 +178,17 @@ class MenuStateMachine:
                     self._confidence_threshold,
                 )
                 self._victory_hold_start = None
+                if self._state == MenuState.CONFIRMING:
+                    self._transition_to(MenuState.NAVIGATING)
+                    return True
             return False
 
+        # UX mapping: "thumbs up" moves selection upward (previous item),
+        # and "thumbs down" moves selection downward (next item).
         if gesture == Gesture.THUMBS_UP:
-            return self._handle_next()
-        if gesture == Gesture.THUMBS_DOWN:
             return self._handle_prev()
+        if gesture == Gesture.THUMBS_DOWN:
+            return self._handle_next()
         if gesture == Gesture.PEACE:
             return self._handle_victory()
         if gesture == Gesture.OPEN_PALM:
@@ -192,6 +197,9 @@ class MenuStateMachine:
         if self._victory_hold_start is not None:
             logger.debug("menu.victory_hold_reset reason=different_gesture gesture=%s", gesture.value)
             self._victory_hold_start = None
+            if self._state == MenuState.CONFIRMING:
+                self._transition_to(MenuState.NAVIGATING)
+                return True
 
         return False
 
@@ -314,6 +322,8 @@ class MenuStateMachine:
         if self._debounce_candidate != Gesture.THUMBS_UP and self._victory_hold_start is not None:
             logger.debug("menu.victory_hold_reset reason=navigation_gesture gesture=thumbs_up")
             self._victory_hold_start = None
+            if self._state == MenuState.CONFIRMING:
+                self._transition_to(MenuState.NAVIGATING)
 
         if not self._debounce_gesture(Gesture.THUMBS_UP):
             return False
@@ -339,6 +349,8 @@ class MenuStateMachine:
         if self._debounce_candidate != Gesture.THUMBS_DOWN and self._victory_hold_start is not None:
             logger.debug("menu.victory_hold_reset reason=navigation_gesture gesture=thumbs_down")
             self._victory_hold_start = None
+            if self._state == MenuState.CONFIRMING:
+                self._transition_to(MenuState.NAVIGATING)
 
         if not self._debounce_gesture(Gesture.THUMBS_DOWN):
             return False
@@ -404,8 +416,8 @@ class MenuStateMachine:
         return False
 
     def _handle_cancel(self) -> bool:
-        if self._victory_hold_start is not None:
-            logger.info("menu.cancel reason=open_palm")
+        if self._state == MenuState.CONFIRMING or self._victory_hold_start is not None:
+            logger.info("menu.cancel reason=open_palm state=%s", self._state.value)
             self._victory_hold_start = None
             if self._state == MenuState.CONFIRMING:
                 self._transition_to(MenuState.NAVIGATING)

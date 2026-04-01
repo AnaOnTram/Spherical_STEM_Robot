@@ -132,6 +132,9 @@ class QuizEngine:
         self._debounce_count: int = 0
         self._debounce_candidate: Optional[int] = None
 
+        # Session lifecycle gate: start() blocks until stop() or completion.
+        self._done_event: asyncio.Event = asyncio.Event()
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -161,7 +164,9 @@ class QuizEngine:
         """Start the quiz from the first question."""
         if not self._questions:
             logger.error("No questions loaded into QuizEngine")
+            self._done_event.set()
             return
+        self._done_event.clear()
         self._index = 0
         self._score = 0
         self._last_finger_count = None
@@ -170,12 +175,14 @@ class QuizEngine:
         self._debounce_count = 0
         self._debounce_candidate = None
         await self._present_question()
+        await self._done_event.wait()
 
     async def stop(self) -> None:
         """Abort the quiz and reset to IDLE."""
         self._accepting_input = False
         self._state = QuizState.IDLE
         self._notify()
+        self._done_event.set()
 
     def handle_finger_count(self, finger_count: int) -> bool:
         """Accept a finger count from the camera detection loop.
@@ -329,6 +336,7 @@ class QuizEngine:
                 logger.error(f"Quiz TTS summary error: {exc}")
 
         self._notify()
+        self._done_event.set()
 
     def _notify(self) -> None:
         """Push current progress to all registered callbacks."""

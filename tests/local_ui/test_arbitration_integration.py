@@ -246,7 +246,7 @@ def test_menu_gestures_allowed_after_cooldown_expires(menu: MenuStateMachine, ar
 
         handled = menu.handle_gesture(Gesture.THUMBS_UP, confidence=0.95)
         assert handled is True
-        assert menu.selected_index == 1
+        assert menu.selected_index == 3
         assert arbitration.is_local_allowed() is True
 
     asyncio.run(_run())
