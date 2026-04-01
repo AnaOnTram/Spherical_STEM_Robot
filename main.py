@@ -93,8 +93,13 @@ class SphericalBot:
 
             # Initialize remote/local arbitration (available even if serial/video are disabled)
             try:
+                from api.websocket import ws_manager
+
                 self.arbitration_controller = ArbitrationController(
                     cooldown_seconds=REMOTE_PREEMPT_COOLDOWN_SECONDS,
+                    serial_manager=self.serial_manager,
+                    image_processor=self.image_processor,
+                    ws_manager=ws_manager,
                 )
             except Exception as exc:
                 logger.error("arbitration.initialization_failed: %s", exc)

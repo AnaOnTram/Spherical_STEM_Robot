@@ -33,6 +33,9 @@ class EventType(Enum):
     VIDEO_FRAME = "video_frame"
     AUDIO_CHUNK = "audio_chunk"
 
+    # Arbitration events
+    ARBITRATION_STATE_CHANGED = "arbitration_state_changed"
+
 
 @dataclass
 class WebSocketEvent:
@@ -283,6 +286,25 @@ class WebSocketManager:
                 "status": status,
             },
         ))
+
+    async def broadcast_arbitration(self, state: str, reason: str) -> None:
+        """Broadcast arbitration state transition updates."""
+        if state is None:
+            raise ValueError("state must not be None")
+        if reason is None:
+            raise ValueError("reason must not be None")
+
+        event = WebSocketEvent(
+            event_type=EventType.ARBITRATION_STATE_CHANGED,
+            data={"state": state, "reason": reason},
+        )
+        sent_count = await self.broadcast(event)
+        if sent_count == 0:
+            logger.debug(
+                "websocket.arbitration_broadcast_skipped state=%s reason=%s no_subscribers=true",
+                state,
+                reason,
+            )
 
     async def handle_connection(self, websocket: WebSocket) -> None:
         """Handle WebSocket connection lifecycle.

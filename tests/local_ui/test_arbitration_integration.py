@@ -84,6 +84,22 @@ class FakeImageProcessor:
     def render_lesson(self, question: str, options: list[str], title: str):
         return f"{title}:{question}:{'|'.join(options)}".encode("utf-8")
 
+    def render_remote_active_notice(self, text: str, font_size: int = 32):
+        return f"notice:{text}:{font_size}".encode("utf-8")
+
+
+class FakeWebSocketManager:
+    def __init__(self, should_raise: bool = False):
+        self.should_raise = should_raise
+        self.events: list[dict[str, str]] = []
+
+    async def broadcast_arbitration(self, state: str, reason: str):
+        if state is None:
+            raise ValueError("state must not be None")
+        if self.should_raise:
+            raise RuntimeError("broadcast failed")
+        self.events.append({"state": state, "reason": reason})
+
 
 @pytest.fixture(autouse=True)
 def fake_esp_serial_modules(monkeypatch):
@@ -101,8 +117,18 @@ def fake_esp_serial_modules(monkeypatch):
 
 
 @pytest.fixture
-def arbitration() -> ArbitrationController:
-    return ArbitrationController(cooldown_seconds=0.05)
+def arbitration(ws_manager: FakeWebSocketManager) -> ArbitrationController:
+    return ArbitrationController(
+        cooldown_seconds=0.05,
+        serial_manager=FakeSerialManager(),
+        image_processor=FakeImageProcessor(),
+        ws_manager=ws_manager,
+    )
+
+
+@pytest.fixture
+def ws_manager() -> FakeWebSocketManager:
+    return FakeWebSocketManager()
 
 
 @pytest.fixture
@@ -300,3 +326,69 @@ def test_preempt_near_cooldown_expiry_restarts_timer(menu: MenuStateMachine, arb
         assert arbitration.snapshot()["state"] == "local"
 
     asyncio.run(_run())
+
+
+def test_preempt_displays_remote_notice_via_serial(ws_manager: FakeWebSocketManager):
+    serial = FakeSerialManager()
+    arbitration = ArbitrationController(
+        cooldown_seconds=0.05,
+        serial_manager=serial,
+        image_processor=FakeImageProcessor(),
+        ws_manager=ws_manager,
+    )
+
+    async def _run():
+        changed = arbitration.preempt_local("movement")
+        assert changed is True
+        await asyncio.sleep(0)
+
+    asyncio.run(_run())
+
+    assert serial.commands
+    assert serial.commands[0]["kind"] == "display_image"
+    assert serial.commands[0]["payload"].startswith(b"notice:Remote Control Active")
+
+
+def test_arbitration_state_transitions_broadcast_to_websocket(ws_manager: FakeWebSocketManager):
+    arbitration = ArbitrationController(
+        cooldown_seconds=0.02,
+        serial_manager=FakeSerialManager(),
+        image_processor=FakeImageProcessor(),
+        ws_manager=ws_manager,
+    )
+
+    async def _run():
+        arbitration.preempt_local("movement")
+        await asyncio.sleep(0)
+        arbitration.release_remote()
+        await asyncio.sleep(0.03)
+
+    asyncio.run(_run())
+
+    states = [evt["state"] for evt in ws_manager.events]
+    assert states == ["remote", "cooldown", "local"]
+    reasons = [evt["reason"] for evt in ws_manager.events]
+    assert reasons[0] == "movement"
+    assert reasons[1] == "remote_released"
+    assert reasons[2] == "cooldown_expired"
+
+
+def test_websocket_broadcast_failure_does_not_block_state_transition(caplog):
+    caplog.set_level("DEBUG")
+    failing_ws = FakeWebSocketManager(should_raise=True)
+    arbitration = ArbitrationController(
+        cooldown_seconds=0.05,
+        serial_manager=FakeSerialManager(),
+        image_processor=FakeImageProcessor(),
+        ws_manager=failing_ws,
+    )
+
+    async def _run():
+        changed = arbitration.preempt_local("movement")
+        assert changed is True
+        await asyncio.sleep(0)
+
+    asyncio.run(_run())
+
+    assert arbitration.snapshot()["state"] == "remote"
+    assert any("arbitration.broadcast_failed state=remote" in record.getMessage() for record in caplog.records)

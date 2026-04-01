@@ -9,7 +9,11 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
-from config import REMOTE_PREEMPT_COOLDOWN_SECONDS
+from config import (
+    REMOTE_ACTIVE_NOTICE_FONT_SIZE,
+    REMOTE_ACTIVE_NOTICE_TEXT,
+    REMOTE_PREEMPT_COOLDOWN_SECONDS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +29,13 @@ class ArbitrationState(Enum):
 class ArbitrationController:
     """Owns local/remote control arbitration with an async cooldown timer."""
 
-    def __init__(self, cooldown_seconds: float = REMOTE_PREEMPT_COOLDOWN_SECONDS):
+    def __init__(
+        self,
+        cooldown_seconds: float = REMOTE_PREEMPT_COOLDOWN_SECONDS,
+        serial_manager: Any | None = None,
+        image_processor: Any | None = None,
+        ws_manager: Any | None = None,
+    ):
         if cooldown_seconds < 0:
             raise ValueError("cooldown_seconds must be >= 0")
 
@@ -36,6 +46,10 @@ class ArbitrationController:
 
         self._cooldown_task: asyncio.Task[None] | None = None
         self._cooldown_started_monotonic: float | None = None
+
+        self._serial_manager = serial_manager
+        self._image_processor = image_processor
+        self._ws_manager = ws_manager
 
     @property
     def state(self) -> ArbitrationState:
@@ -58,6 +72,10 @@ class ArbitrationController:
 
         self._cancel_cooldown_task("preempt_local")
         self._transition_to(ArbitrationState.REMOTE, reason)
+        self._display_remote_active_notice(
+            text=REMOTE_ACTIVE_NOTICE_TEXT,
+            font_size=REMOTE_ACTIVE_NOTICE_FONT_SIZE,
+        )
         return True
 
     def release_remote(self) -> bool:
@@ -155,6 +173,82 @@ class ArbitrationController:
             reason,
             timestamp,
         )
+        self._schedule_arbitration_broadcast(new_state)
+
+    def _display_remote_active_notice(self, text: str, font_size: int) -> None:
+        """Render and push remote-active notice to e-ink without blocking arbitration."""
+        if self._serial_manager is None:
+            logger.warning("arbitration.notice_skipped reason=serial_manager_unavailable")
+            return
+        if self._image_processor is None:
+            logger.warning("arbitration.notice_skipped reason=image_processor_unavailable")
+            return
+
+        try:
+            packed = self._image_processor.render_remote_active_notice(text, font_size)
+        except Exception as exc:
+            logger.error("arbitration.notice_render_failed err=%s", exc)
+            return
+
+        try:
+            from esp_serial.commands import CommandBuilder
+
+            command = CommandBuilder.display_image(packed)
+        except Exception as exc:
+            logger.error("arbitration.notice_command_build_failed err=%s", exc)
+            return
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.warning("arbitration.notice_send_skipped reason=no_running_event_loop")
+            return
+
+        task = loop.create_task(self._serial_manager.send_command_async(command))
+
+        def _on_done(done_task: asyncio.Task) -> None:
+            try:
+                done_task.result()
+                logger.info("arbitration.notice_displayed text=%s size=%s", text, font_size)
+            except Exception as exc:
+                logger.error("arbitration.notice_send_failed err=%s", exc)
+
+        task.add_done_callback(_on_done)
+
+    def _schedule_arbitration_broadcast(self, new_state: ArbitrationState) -> None:
+        """Broadcast arbitration transition when a websocket manager is available."""
+        if self._ws_manager is None:
+            logger.debug(
+                "arbitration.broadcast_skipped state=%s reason=no_ws_manager",
+                new_state.value,
+            )
+            return
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.debug(
+                "arbitration.broadcast_skipped state=%s reason=no_running_event_loop",
+                new_state.value,
+            )
+            return
+
+        task = loop.create_task(
+            self._ws_manager.broadcast_arbitration(new_state.value, self._reason)
+        )
+
+        def _on_done(done_task: asyncio.Task) -> None:
+            try:
+                done_task.result()
+            except Exception as exc:
+                logger.debug(
+                    "arbitration.broadcast_failed state=%s reason=%s err=%s",
+                    new_state.value,
+                    self._reason,
+                    exc,
+                )
+
+        task.add_done_callback(_on_done)
 
     @staticmethod
     def _iso_timestamp() -> str:

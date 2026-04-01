@@ -11,7 +11,12 @@ try:
 except ImportError:
     Image = None
 
-from config import EINK_WIDTH, EINK_HEIGHT, EINK_IMAGE_SIZE
+from config import (
+    EINK_WIDTH,
+    EINK_HEIGHT,
+    EINK_IMAGE_SIZE,
+    REMOTE_ACTIVE_NOTICE_FONT_SIZE,
+)
 
 # CJK font search order — install with: sudo apt install fonts-noto-cjk
 _CJK_FONT_PATHS = [
@@ -227,6 +232,61 @@ class EInkImageProcessor:
             y += line_height
 
         return self.process(img)
+
+    def render_remote_active_notice(
+        self,
+        text: str,
+        font_size: int = REMOTE_ACTIVE_NOTICE_FONT_SIZE,
+    ) -> bytes:
+        """Render centered remote-control notice for arbitration preemption."""
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("text must be a non-empty string")
+        if font_size <= 0:
+            raise ValueError("font_size must be > 0")
+
+        if Image is None:
+            logger.warning(
+                "arbitration.notice_render_skipped reason=pillow_unavailable text=%s size=%s",
+                text,
+                font_size,
+            )
+            # White frame fallback to keep arbitration flow non-blocking.
+            return bytes([0xFF]) * EINK_IMAGE_SIZE
+
+        from PIL import ImageDraw
+
+        # Build an oversized default-font rendering then scale to requested size.
+        # This avoids hard dependency on external font files while honoring font_size.
+        work = Image.new("L", (self.width, self.height), 255)
+        draw = ImageDraw.Draw(work)
+        font = self._load_cjk_font(max(12, int(font_size)))
+
+        candidate = text.strip()
+        while candidate:
+            bbox = draw.textbbox((0, 0), candidate, font=font)
+            text_w = bbox[2] - bbox[0]
+            text_h = bbox[3] - bbox[1]
+            if text_w <= self.width - 24 and text_h <= self.height - 24:
+                break
+            candidate = candidate[:-1]
+
+        if not candidate:
+            candidate = text.strip()[:1]
+            bbox = draw.textbbox((0, 0), candidate, font=font)
+            text_w = bbox[2] - bbox[0]
+            text_h = bbox[3] - bbox[1]
+
+        x = max(0, (self.width - text_w) // 2)
+        y = max(0, (self.height - text_h) // 2)
+        draw.text((x, y), candidate, fill=0, font=font)
+
+        logger.info(
+            "arbitration.notice_rendered text=%s size=%s rendered_text=%s",
+            text,
+            font_size,
+            candidate,
+        )
+        return self._pack_to_bytes(work.convert("1"))
 
     # ------------------------------------------------------------------ #
     #  CJK helpers                                                        #
