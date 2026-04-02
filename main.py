@@ -242,8 +242,6 @@ class SphericalBot:
 
             if self.bootstrap_state.home_menu_ready:
                 logger.info("bootstrap.ready after attempt=%s", attempt)
-                # Instantiate menu state machine after successful bootstrap
-                self._initialize_menu()
                 break
 
             logger.warning(
@@ -254,6 +252,18 @@ class SphericalBot:
             )
             if self.bootstrap_state.phase.value == "error":
                 break
+
+        if self.menu_state is None:
+            # Keep local gesture navigation available even when boot-time e-ink
+            # publish fails. Display sync/publish attempts remain best-effort.
+            self._initialize_menu()
+            if not self.bootstrap_state.home_menu_ready:
+                snapshot = self.bootstrap_state.snapshot()
+                logger.warning(
+                    "menu.initialized_degraded mode=bootstrap_failed phase=%s error=%s",
+                    snapshot.get("phase"),
+                    snapshot.get("last_error"),
+                )
 
         return self.bootstrap_state
 

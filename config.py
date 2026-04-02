@@ -93,9 +93,15 @@ MENU_AUDIO_CUE_PATH = "/tmp/menu_confirm.mp3"
 STEM_EXIT_HOLD_SECONDS = 2.0
 
 # Remote-first arbitration and cooldown resume (S03)
-REMOTE_PREEMPT_COOLDOWN_SECONDS = 10.0
+REMOTE_PREEMPT_COOLDOWN_SECONDS = 0.0
 REMOTE_ACTIVE_NOTICE_TEXT = "Remote Control Active"
 REMOTE_ACTIVE_NOTICE_FONT_SIZE = 32
+REMOTE_ACTIVE_NOTICE_ENABLED = False
+# Keep remote control latched for a short idle gap between sequential API calls
+# (e.g. rapid move/stop bursts), avoiding REMOTE<->COOLDOWN oscillation.
+REMOTE_RELEASE_GRACE_SECONDS = 0.35
+# Minimum interval between e-ink "Remote Control Active" notice pushes.
+REMOTE_ACTIVE_NOTICE_MIN_INTERVAL_SECONDS = 15.0
 
 # YAMNet Sound Detection
 YAMNET_THRESHOLD = 0.8

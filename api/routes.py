@@ -28,6 +28,14 @@ TEMP_AUDIO_DIR.mkdir(exist_ok=True)
 
 _PROCESSING_INTERVAL = 5.0  # seconds between each "Processing. Please wait." repeat
 
+# Remote control arbitration lease counter.
+# Keeps REMOTE active while one or more remote commands are in flight,
+# preventing rapid REMOTE<->COOLDOWN flapping on command bursts.
+_REMOTE_CONTROL_LOCK = threading.Lock()
+_REMOTE_CONTROL_INFLIGHT = 0
+_REMOTE_RELEASE_TASK = None
+_REMOTE_RELEASE_GRACE_SECONDS = float(getattr(config, "REMOTE_RELEASE_GRACE_SECONDS", 1.5))
+
 
 async def _play_processing_loop(
     audio_player, processing_path: str, done: threading.Event
@@ -263,22 +271,81 @@ def get_app_state():
 
 def _preempt_remote_control(endpoint: str, reason: str):
     """Preempt local control for remote endpoint execution."""
+    global _REMOTE_CONTROL_INFLIGHT, _REMOTE_RELEASE_TASK
+
     arbitration = _app_state.get("arbitration")
     if arbitration is None:
         return None
 
-    logger.info("api.preempt_remote endpoint=%s reason=%s", endpoint, reason)
-    arbitration.preempt_local(reason)
+    should_preempt = False
+    with _REMOTE_CONTROL_LOCK:
+        if _REMOTE_RELEASE_TASK is not None and not _REMOTE_RELEASE_TASK.done():
+            _REMOTE_RELEASE_TASK.cancel()
+        _REMOTE_RELEASE_TASK = None
+        _REMOTE_CONTROL_INFLIGHT += 1
+        should_preempt = _REMOTE_CONTROL_INFLIGHT == 1
+        inflight = _REMOTE_CONTROL_INFLIGHT
+
+    if should_preempt:
+        logger.info("api.preempt_remote endpoint=%s reason=%s inflight=%d", endpoint, reason, inflight)
+        arbitration.preempt_local(reason)
+    else:
+        logger.debug(
+            "api.preempt_remote_reused endpoint=%s reason=%s inflight=%d",
+            endpoint,
+            reason,
+            inflight,
+        )
+
     return arbitration
 
 
 def _release_remote_control(arbitration, endpoint: str) -> None:
     """Release remote control and start cooldown when arbitration is available."""
+    global _REMOTE_CONTROL_INFLIGHT, _REMOTE_RELEASE_TASK
+
     if arbitration is None:
         return
 
-    logger.info("api.release_remote endpoint=%s", endpoint)
-    arbitration.release_remote()
+    should_schedule_release = False
+    with _REMOTE_CONTROL_LOCK:
+        if _REMOTE_CONTROL_INFLIGHT > 0:
+            _REMOTE_CONTROL_INFLIGHT -= 1
+        else:
+            logger.warning("api.release_remote_counter_underflow endpoint=%s", endpoint)
+            _REMOTE_CONTROL_INFLIGHT = 0
+        should_schedule_release = _REMOTE_CONTROL_INFLIGHT == 0
+        inflight = _REMOTE_CONTROL_INFLIGHT
+
+    if should_schedule_release:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.warning("api.release_remote_no_loop endpoint=%s releasing_immediately=true", endpoint)
+            arbitration.release_remote()
+            return
+
+        async def _delayed_release() -> None:
+            global _REMOTE_RELEASE_TASK
+            try:
+                await asyncio.sleep(_REMOTE_RELEASE_GRACE_SECONDS)
+                with _REMOTE_CONTROL_LOCK:
+                    if _REMOTE_CONTROL_INFLIGHT != 0:
+                        return
+                    _REMOTE_RELEASE_TASK = None
+                logger.info(
+                    "api.release_remote endpoint=%s inflight=0 grace_s=%.2f",
+                    endpoint,
+                    _REMOTE_RELEASE_GRACE_SECONDS,
+                )
+                arbitration.release_remote()
+            except asyncio.CancelledError:
+                logger.debug("api.release_remote_cancelled endpoint=%s", endpoint)
+                raise
+
+        _REMOTE_RELEASE_TASK = loop.create_task(_delayed_release())
+    else:
+        logger.debug("api.release_remote_deferred endpoint=%s inflight=%d", endpoint, inflight)
 
 
 @asynccontextmanager

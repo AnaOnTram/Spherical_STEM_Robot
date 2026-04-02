@@ -7,9 +7,11 @@ from typing import Callable, Optional
 import serial as pyserial  # Rename to avoid confusion with our module
 
 from config import SERIAL_PORT, SERIAL_BAUDRATE, SERIAL_TIMEOUT
-from .protocol import Command, Response, ResponseStatus
+from .protocol import Command, CommandType, Response, ResponseStatus
 
 logger = logging.getLogger(__name__)
+
+DISPLAY_COMMAND_TIMEOUT_SECONDS = 12.0
 
 
 def resolve_port(port: str) -> str:
@@ -130,7 +132,11 @@ class SerialManager:
             if not self.is_connected:
                 return Response(ResponseStatus.ERR, "Not connected")
 
+            original_timeout = self._serial.timeout
             try:
+                if command.cmd_type == CommandType.DIMG:
+                    self._serial.timeout = max(float(original_timeout or 0.0), DISPLAY_COMMAND_TIMEOUT_SECONDS)
+
                 # Clear input buffer
                 self._serial.reset_input_buffer()
 
@@ -160,6 +166,8 @@ class SerialManager:
             except pyserial.SerialException as e:
                 logger.error(f"Serial error: {e}")
                 return Response(ResponseStatus.ERR, str(e))
+            finally:
+                self._serial.timeout = original_timeout
 
     async def send_command_async(self, command: Command) -> Response:
         """Send command asynchronously."""

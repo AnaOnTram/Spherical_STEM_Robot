@@ -10,7 +10,9 @@ from enum import Enum
 from typing import Any
 
 from config import (
+    REMOTE_ACTIVE_NOTICE_ENABLED,
     REMOTE_ACTIVE_NOTICE_FONT_SIZE,
+    REMOTE_ACTIVE_NOTICE_MIN_INTERVAL_SECONDS,
     REMOTE_ACTIVE_NOTICE_TEXT,
     REMOTE_PREEMPT_COOLDOWN_SECONDS,
 )
@@ -50,6 +52,10 @@ class ArbitrationController:
         self._serial_manager = serial_manager
         self._image_processor = image_processor
         self._ws_manager = ws_manager
+        self._remote_active_notice_enabled = bool(REMOTE_ACTIVE_NOTICE_ENABLED)
+        self._notice_min_interval_seconds = float(REMOTE_ACTIVE_NOTICE_MIN_INTERVAL_SECONDS)
+        self._last_notice_sent_monotonic: float | None = None
+        self._notice_task: asyncio.Task[Any] | None = None
 
     @property
     def state(self) -> ArbitrationState:
@@ -72,10 +78,11 @@ class ArbitrationController:
 
         self._cancel_cooldown_task("preempt_local")
         self._transition_to(ArbitrationState.REMOTE, reason)
-        self._display_remote_active_notice(
-            text=REMOTE_ACTIVE_NOTICE_TEXT,
-            font_size=REMOTE_ACTIVE_NOTICE_FONT_SIZE,
-        )
+        if self._remote_active_notice_enabled:
+            self._display_remote_active_notice(
+                text=REMOTE_ACTIVE_NOTICE_TEXT,
+                font_size=REMOTE_ACTIVE_NOTICE_FONT_SIZE,
+            )
         return True
 
     def release_remote(self) -> bool:
@@ -86,6 +93,11 @@ class ArbitrationController:
                 self._state.value,
             )
             return False
+
+        if self._cooldown_seconds <= 0:
+            self._transition_to(ArbitrationState.LOCAL, "remote_released_no_cooldown")
+            self._cooldown_started_monotonic = None
+            return True
 
         self._transition_to(ArbitrationState.COOLDOWN, "remote_released")
         self._start_cooldown_timer()
@@ -177,6 +189,22 @@ class ArbitrationController:
 
     def _display_remote_active_notice(self, text: str, font_size: int) -> None:
         """Render and push remote-active notice to e-ink without blocking arbitration."""
+        now = time.monotonic()
+        if (
+            self._last_notice_sent_monotonic is not None
+            and now - self._last_notice_sent_monotonic < self._notice_min_interval_seconds
+        ):
+            logger.debug(
+                "arbitration.notice_skipped reason=throttled elapsed=%.2fs min_interval=%.2fs",
+                now - self._last_notice_sent_monotonic,
+                self._notice_min_interval_seconds,
+            )
+            return
+
+        if self._notice_task is not None and not self._notice_task.done():
+            logger.debug("arbitration.notice_skipped reason=send_inflight")
+            return
+
         if self._serial_manager is None:
             logger.warning("arbitration.notice_skipped reason=serial_manager_unavailable")
             return
@@ -205,13 +233,18 @@ class ArbitrationController:
             return
 
         task = loop.create_task(self._serial_manager.send_command_async(command))
+        self._notice_task = task
 
         def _on_done(done_task: asyncio.Task) -> None:
             try:
                 done_task.result()
+                self._last_notice_sent_monotonic = time.monotonic()
                 logger.info("arbitration.notice_displayed text=%s size=%s", text, font_size)
             except Exception as exc:
                 logger.error("arbitration.notice_send_failed err=%s", exc)
+            finally:
+                if self._notice_task is done_task:
+                    self._notice_task = None
 
         task.add_done_callback(_on_done)
 

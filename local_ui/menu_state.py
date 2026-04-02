@@ -319,13 +319,13 @@ class MenuStateMachine:
         )
 
     def _handle_next(self) -> bool:
-        if self._debounce_candidate != Gesture.THUMBS_UP and self._victory_hold_start is not None:
-            logger.debug("menu.victory_hold_reset reason=navigation_gesture gesture=thumbs_up")
+        if self._debounce_candidate != Gesture.THUMBS_DOWN and self._victory_hold_start is not None:
+            logger.debug("menu.victory_hold_reset reason=navigation_gesture gesture=thumbs_down")
             self._victory_hold_start = None
             if self._state == MenuState.CONFIRMING:
                 self._transition_to(MenuState.NAVIGATING)
 
-        if not self._debounce_gesture(Gesture.THUMBS_UP):
+        if not self._debounce_gesture(Gesture.THUMBS_DOWN):
             return False
 
         if self._state == MenuState.IDLE:
@@ -346,13 +346,13 @@ class MenuStateMachine:
         return False
 
     def _handle_prev(self) -> bool:
-        if self._debounce_candidate != Gesture.THUMBS_DOWN and self._victory_hold_start is not None:
-            logger.debug("menu.victory_hold_reset reason=navigation_gesture gesture=thumbs_down")
+        if self._debounce_candidate != Gesture.THUMBS_UP and self._victory_hold_start is not None:
+            logger.debug("menu.victory_hold_reset reason=navigation_gesture gesture=thumbs_up")
             self._victory_hold_start = None
             if self._state == MenuState.CONFIRMING:
                 self._transition_to(MenuState.NAVIGATING)
 
-        if not self._debounce_gesture(Gesture.THUMBS_DOWN):
+        if not self._debounce_gesture(Gesture.THUMBS_UP):
             return False
 
         if self._state == MenuState.IDLE:
