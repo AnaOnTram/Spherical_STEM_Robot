@@ -26,7 +26,7 @@ def test_single_commit_dispatches_single_chat_launch_call():
     launch_calls: list[str] = []
 
     async def _launch() -> None:
-        launch_calls.append("Chat")
+        launch_calls.append("chat")
 
     async def _run():
         launched = await bot._handle_local_chat_commit("Chat", launch_chat_fn=_launch)
@@ -34,16 +34,16 @@ def test_single_commit_dispatches_single_chat_launch_call():
 
     asyncio.run(_run())
 
-    assert launch_calls == ["Chat"]
+    assert launch_calls == ["chat"]
 
 
-def test_repeated_loop_frames_do_not_duplicate_single_commit_launch():
+def test_repeated_loop_frames_do_not_duplicate_single_commit_chat_launch():
     bot = SphericalBot(enable_video=False, enable_audio=False, enable_serial=False, enable_alarm=False)
     bot.menu_state = _FakeMenuState("Chat")
     launch_calls: list[str] = []
 
     async def _launch() -> None:
-        launch_calls.append("Chat")
+        launch_calls.append("chat")
 
     async def _simulate_loop_frames(frame_count: int) -> None:
         for _ in range(frame_count):
@@ -53,7 +53,7 @@ def test_repeated_loop_frames_do_not_duplicate_single_commit_launch():
 
     asyncio.run(_simulate_loop_frames(5))
 
-    assert launch_calls == ["Chat"]
+    assert launch_calls == ["chat"]
 
 
 def test_arbitration_denied_suppresses_chat_launch():
@@ -65,7 +65,7 @@ def test_arbitration_denied_suppresses_chat_launch():
     launch_calls: list[str] = []
 
     async def _launch() -> None:
-        launch_calls.append("Chat")
+        launch_calls.append("chat")
 
     async def _run():
         launched = await bot._handle_local_chat_commit("Chat", launch_chat_fn=_launch)
