@@ -6,7 +6,7 @@ import logging
 import signal
 import sys
 import time
-from typing import Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 import numpy as np
 import uvicorn
@@ -74,6 +74,7 @@ class SphericalBot:
         self._tasks: list[asyncio.Task] = []
         self.bootstrap_state = BootstrapState()
         self._stem_session_active = False
+        self._chat_session_active = False
         self._stem_exit_hold_start: Optional[float] = None
         self._stem_exit_requested = False
         self._throttled_log_timestamps: dict[str, float] = {}
@@ -295,6 +296,106 @@ class SphericalBot:
             self._last_nav_time = time.monotonic() - MENU_NAV_SYNC_SETTLE_SECONDS
             logger.info("menu_restore.display_sync_requested source=stem_exit selected_index=%d", self.menu_state.selected_index)
 
+    def _get_local_arbitration_snapshot(self) -> tuple[str, str, bool]:
+        """Return arbitration state/reason/permission with safe defaults."""
+        arbitration_state = "none"
+        arbitration_reason = "none"
+        local_allowed = True
+        if self.arbitration_controller is not None:
+            snapshot: dict[str, Any] = self.arbitration_controller.snapshot()
+            arbitration_state = snapshot.get("state", "unknown")
+            arbitration_reason = snapshot.get("reason", "unknown")
+            local_allowed = self.arbitration_controller.is_local_allowed()
+        return arbitration_state, arbitration_reason, local_allowed
+
+    def _handle_chat_session_finished(self) -> None:
+        """Finalize local chat session and deterministically restore home menu state."""
+        if not self._chat_session_active:
+            return
+
+        self._chat_session_active = False
+        logger.info("chat_session_finished source=local_menu")
+
+        if self.menu_state is not None and hasattr(self.menu_state, "reset_after_external_session"):
+            self.menu_state.reset_after_external_session()
+            logger.info("menu_restored source=chat_exit")
+            self._pending_display_update = True
+            self._last_nav_time = time.monotonic() - MENU_NAV_SYNC_SETTLE_SECONDS
+            logger.info(
+                "menu_restore.display_sync_requested source=chat_exit selected_index=%d",
+                self.menu_state.selected_index,
+            )
+
+    async def _launch_local_chat(self) -> None:
+        """Run one local single-turn chat using the existing LLM chat service."""
+        from LLM_Chat.service import oral_chat_with_llm
+
+        if not self.audio_recorder or not self.audio_recorder.is_recording:
+            raise RuntimeError("Audio recorder not available")
+
+        record_seconds = 4.0
+        wav_data = await asyncio.to_thread(self.audio_recorder.record_audio, record_seconds)
+        await asyncio.to_thread(oral_chat_with_llm, wav_data)
+
+    async def _run_local_chat_session(
+        self,
+        launch_chat_fn: Optional[Callable[[], Awaitable[None]]] = None,
+    ) -> None:
+        """Execute the local chat turn and always run deterministic finish cleanup."""
+        if self._chat_session_active:
+            logger.info("chat_session_started result=ignored_already_active")
+            return
+
+        self._chat_session_active = True
+        logger.info("chat_session_started source=local_menu")
+
+        launch = launch_chat_fn
+        if launch is None:
+            async def _default_launch() -> None:
+                await self._launch_local_chat()
+
+            launch = _default_launch
+
+        try:
+            await launch()
+        except Exception as exc:
+            logger.error("chat_session_error err=%s", exc)
+        finally:
+            self._handle_chat_session_finished()
+
+    async def _handle_local_chat_commit(
+        self,
+        selected_item: str,
+        launch_chat_fn: Optional[Callable[[], Awaitable[None]]] = None,
+    ) -> bool:
+        """Dispatch one-shot local Chat commit with arbitration-aware logging."""
+        normalized = selected_item.strip().lower()
+        if normalized != "chat":
+            logger.info(
+                "menu.chat_dispatch result=ignored_non_chat item=%s",
+                selected_item,
+            )
+            return False
+
+        arbitration_state, arbitration_reason, local_allowed = self._get_local_arbitration_snapshot()
+        if not local_allowed:
+            logger.info(
+                "menu.chat_dispatch result=blocked_by_arbitration item=%s arbitration_state=%s arbitration_reason=%s",
+                selected_item,
+                arbitration_state,
+                arbitration_reason,
+            )
+            return False
+
+        await self._run_local_chat_session(launch_chat_fn=launch_chat_fn)
+        logger.info(
+            "menu.chat_dispatch result=launched item=%s arbitration_state=%s arbitration_reason=%s",
+            selected_item,
+            arbitration_state,
+            arbitration_reason,
+        )
+        return True
+
     async def _handle_local_stem_commit(
         self,
         selected_item: str,
@@ -309,14 +410,7 @@ class SphericalBot:
             )
             return False
 
-        arbitration_state = "none"
-        arbitration_reason = "none"
-        local_allowed = True
-        if self.arbitration_controller is not None:
-            snapshot = self.arbitration_controller.snapshot()
-            arbitration_state = snapshot.get("state", "unknown")
-            arbitration_reason = snapshot.get("reason", "unknown")
-            local_allowed = self.arbitration_controller.is_local_allowed()
+        arbitration_state, arbitration_reason, local_allowed = self._get_local_arbitration_snapshot()
 
         if not local_allowed:
             logger.info(
@@ -397,6 +491,7 @@ class SphericalBot:
                     self.menu_state
                     and self.menu_state.is_active
                     and not self._stem_session_active
+                    and not self._chat_session_active
                     and not quiz_active
                 )
 
@@ -498,8 +593,11 @@ class SphericalBot:
 
                                 if self.menu_state.consume_commit_requested():
                                     selected_item = self.menu_state.menu_entries[self.menu_state.selected_index]
-                                    if selected_item.strip().lower() == "stem":
+                                    normalized_item = selected_item.strip().lower()
+                                    if normalized_item == "stem":
                                         asyncio.create_task(self._handle_local_stem_commit(selected_item))
+                                    elif normalized_item == "chat":
+                                        asyncio.create_task(self._handle_local_chat_commit(selected_item))
                                     else:
                                         async def do_commit():
                                             self._is_display_updating = True
