@@ -134,6 +134,8 @@ class QuizEngine:
 
         # Session lifecycle gate: start() blocks until stop() or completion.
         self._done_event: asyncio.Event = asyncio.Event()
+        self._run_generation: int = 0
+        self._advance_task: Optional[asyncio.Task] = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -167,6 +169,8 @@ class QuizEngine:
             self._done_event.set()
             return
         self._done_event.clear()
+        self._run_generation += 1
+        run_generation = self._run_generation
         self._index = 0
         self._score = 0
         self._last_finger_count = None
@@ -174,13 +178,17 @@ class QuizEngine:
         self._last_correct = None
         self._debounce_count = 0
         self._debounce_candidate = None
-        await self._present_question()
+        await self._present_question(run_generation)
         await self._done_event.wait()
 
     async def stop(self) -> None:
         """Abort the quiz and reset to IDLE."""
+        self._run_generation += 1  # invalidate any in-flight async steps
         self._accepting_input = False
         self._state = QuizState.IDLE
+        if self._advance_task is not None and not self._advance_task.done():
+            self._advance_task.cancel()
+        self._advance_task = None
         self._notify()
         self._done_event.set()
 
@@ -232,15 +240,17 @@ class QuizEngine:
             f"correct={self._last_correct} score={self._score}/{self.total}"
         )
 
-        asyncio.create_task(self._show_result_and_advance())
+        self._advance_task = asyncio.create_task(self._show_result_and_advance(self._run_generation))
         return True
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    async def _present_question(self) -> None:
+    async def _present_question(self, run_generation: int) -> None:
         """Render + read the current question, then enter WAITING_ANSWER."""
+        if run_generation != self._run_generation:
+            return
         q = self._questions[self._index]
         self._state = QuizState.READING_QUESTION
         self._accepting_input = False
@@ -267,6 +277,9 @@ class QuizEngine:
             except Exception as exc:
                 logger.error(f"Quiz TTS error: {exc}")
 
+        if run_generation != self._run_generation:
+            return
+
         # Now accept finger-count answers from the camera
         self._state = QuizState.WAITING_ANSWER
         self._accepting_input = True
@@ -283,8 +296,10 @@ class QuizEngine:
         )
         return ". ".join(parts)
 
-    async def _show_result_and_advance(self) -> None:
+    async def _show_result_and_advance(self, run_generation: int) -> None:
         """Read out feedback, pause, then move to the next question."""
+        if run_generation != self._run_generation:
+            return
         self._state = QuizState.SHOWING_RESULT
         self._notify()
 
@@ -307,18 +322,22 @@ class QuizEngine:
                 logger.error(f"Quiz TTS feedback error: {exc}")
 
         await asyncio.sleep(self._result_delay)
+        if run_generation != self._run_generation:
+            return
 
         self._index += 1
         if self._index >= len(self._questions):
-            await self._complete()
+            await self._complete(run_generation)
         else:
             self._last_finger_count = None
             self._last_answer_index = None
             self._last_correct = None
-            await self._present_question()
+            await self._present_question(run_generation)
 
-    async def _complete(self) -> None:
+    async def _complete(self, run_generation: int) -> None:
         """Finalise the quiz."""
+        if run_generation != self._run_generation:
+            return
         self._state = QuizState.COMPLETED
         self._accepting_input = False
         logger.info(f"Quiz complete: score {self._score}/{self.total}")

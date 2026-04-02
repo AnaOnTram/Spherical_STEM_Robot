@@ -333,6 +333,110 @@ class EInkImageProcessor:
             lines.append(current)
         return lines
 
+    def _menu_icon(self, draw, icon: str, x: int, y: int, selected: bool) -> None:
+        """Draw tiny monochrome icon glyph for menu rows."""
+        fg = 255 if selected else 0
+        bg = 0 if selected else 255
+        # icon box
+        draw.rounded_rectangle([x, y, x + 25, y + 25], radius=6, outline=fg, fill=bg, width=2)
+
+        if icon == "stem":
+            # simple rocket-like shape
+            draw.polygon([(x + 12, y + 4), (x + 18, y + 15), (x + 12, y + 21), (x + 6, y + 15)], fill=fg)
+            draw.ellipse([x + 10, y + 10, x + 14, y + 14], fill=bg)
+        elif icon == "chat":
+            draw.rounded_rectangle([x + 5, y + 6, x + 20, y + 17], radius=4, outline=fg, width=2)
+            draw.polygon([(x + 11, y + 17), (x + 9, y + 22), (x + 14, y + 17)], fill=fg)
+        elif icon == "follow":
+            draw.ellipse([x + 6, y + 6, x + 13, y + 13], fill=fg)
+            draw.ellipse([x + 13, y + 13, x + 20, y + 20], fill=fg)
+        elif icon == "call":
+            # heart
+            draw.ellipse([x + 6, y + 8, x + 12, y + 14], fill=fg)
+            draw.ellipse([x + 13, y + 8, x + 19, y + 14], fill=fg)
+            draw.polygon([(x + 6, y + 12), (x + 19, y + 12), (x + 12, y + 20)], fill=fg)
+
+    def _normalize_menu_entries(self, entries: Sequence[str] | None) -> tuple[str, str, str, str]:
+        baseline = ("STEM", "Chat", "Follow", "Call Parent")
+        if entries is None:
+            return baseline
+
+        cleaned = tuple(str(item).strip() for item in entries if str(item).strip())
+        if len(cleaned) != 4:
+            logger.warning(
+                "Home menu entries malformed (count=%s), using baseline.",
+                len(cleaned),
+            )
+            return baseline
+
+        return cleaned  # type: ignore[return-value]
+
+    def _render_menu_canvas(
+        self,
+        entries: tuple[str, str, str, str],
+        title: str,
+        selected_index: Optional[int] = None,
+    ):
+        from PIL import Image, ImageDraw
+
+        selected_index = (
+            None if selected_index is None else max(0, min(selected_index, len(entries) - 1))
+        )
+
+        img = Image.new("L", (self.width, self.height), 255)
+        draw = ImageDraw.Draw(img)
+
+        font_header = self._load_cjk_font(22)
+        font_sub = self._load_cjk_font(14)
+        font_item = self._load_cjk_font(22)
+
+        # Playful frame
+        draw.rounded_rectangle([3, 3, self.width - 4, self.height - 4], radius=14, outline=0, width=2)
+
+        # Header ribbon
+        header_h = 62
+        draw.rounded_rectangle([10, 10, self.width - 11, header_h], radius=12, fill=0, outline=0, width=2)
+        draw.text((20, 18), title, fill=255, font=font_header)
+        draw.text((20, 42), "Pick an adventure!", fill=255, font=font_sub)
+
+        # Decorative sparkles
+        for sx, sy in ((330, 24), (350, 38), (372, 26)):
+            draw.line([(sx - 3, sy), (sx + 3, sy)], fill=255, width=1)
+            draw.line([(sx, sy - 3), (sx, sy + 3)], fill=255, width=1)
+
+        row_top = header_h + 10
+        row_h = 52
+        row_gap = 6
+        icons = ("stem", "chat", "follow", "call")
+
+        for idx, label in enumerate(entries):
+            y0 = row_top + idx * (row_h + row_gap)
+            y1 = y0 + row_h
+            is_selected = selected_index is not None and idx == selected_index
+
+            if is_selected:
+                draw.rounded_rectangle([16, y0, self.width - 16, y1], radius=14, fill=0, outline=0, width=2)
+                text_fill = 255
+            else:
+                draw.rounded_rectangle([16, y0, self.width - 16, y1], radius=14, fill=255, outline=0, width=2)
+                text_fill = 0
+
+            self._menu_icon(draw, icons[idx], 28, y0 + 13, is_selected)
+
+            label_y = y0 + 13
+            draw.text((62, label_y), label, fill=text_fill, font=font_item)
+
+            if is_selected:
+                # right-side cue
+                arrow_x = self.width - 38
+                arrow_y = y0 + row_h // 2
+                draw.polygon(
+                    [(arrow_x - 6, arrow_y - 7), (arrow_x + 5, arrow_y), (arrow_x - 6, arrow_y + 7)],
+                    fill=255,
+                )
+
+        return img
+
     def render_home_menu(
         self,
         entries: Sequence[str] | None = None,
@@ -344,56 +448,8 @@ class EInkImageProcessor:
         STEM, Chat, Follow, Call Parent.
         Malformed entry lists are normalized back to this baseline.
         """
-        from PIL import Image, ImageDraw
-
-        baseline = ("STEM", "Chat", "Follow", "Call Parent")
-        if entries is None:
-            normalized = baseline
-        else:
-            cleaned = tuple(str(item).strip() for item in entries if str(item).strip())
-            normalized = cleaned if len(cleaned) == 4 else baseline
-            if len(cleaned) != 4:
-                logger.warning(
-                    "Home menu entries malformed (count=%s), using baseline.",
-                    len(cleaned),
-                )
-
-        img = Image.new("L", (self.width, self.height), 255)
-        draw = ImageDraw.Draw(img)
-
-        font_header = self._load_cjk_font(20)
-        font_item = self._load_cjk_font(22)
-
-        # Header bar
-        header_height = 38
-        draw.rectangle([0, 0, self.width - 1, header_height], fill=0)
-        draw.text((12, 9), title, fill=255, font=font_header)
-
-        # Menu rows (4 deterministic rows)
-        row_top = header_height + 14
-        row_height = (self.height - row_top - 10) // 4
-        for index, label in enumerate(normalized):
-            y0 = row_top + index * row_height
-            y1 = y0 + row_height
-
-            if index > 0:
-                draw.line([(0, y0), (self.width - 1, y0)], fill=0, width=1)
-
-            bullet_cx = 22
-            bullet_cy = y0 + row_height // 2
-            draw.ellipse(
-                [bullet_cx - 7, bullet_cy - 7, bullet_cx + 7, bullet_cy + 7],
-                outline=0,
-                width=2,
-            )
-
-            text_y = y0 + max(0, (row_height - 22) // 2)
-            draw.text((40, text_y), label, fill=0, font=font_item)
-
-            # Keep final border deterministic
-            if index == 3:
-                draw.line([(0, y1), (self.width - 1, y1)], fill=0, width=1)
-
+        normalized = self._normalize_menu_entries(entries)
+        img = self._render_menu_canvas(normalized, title, selected_index=None)
         return self._pack_to_bytes(img.convert("1"))
 
     def render_lesson(
@@ -503,82 +559,8 @@ class EInkImageProcessor:
         Returns:
             15000 bytes of packed 1-bit image data
         """
-        from PIL import Image, ImageDraw
-
-        # Normalize entries to baseline if needed
-        baseline = ("STEM", "Chat", "Follow", "Call Parent")
-        if entries is None:
-            normalized = baseline
-        else:
-            cleaned = tuple(str(item).strip() for item in entries if str(item).strip())
-            normalized = cleaned if len(cleaned) == 4 else baseline
-            if len(cleaned) != 4:
-                logger.warning(
-                    "Menu selection entries malformed (count=%s), using baseline.",
-                    len(cleaned),
-                )
-
-        # Clamp selected_index to valid range
-        selected_index = max(0, min(selected_index, len(normalized) - 1))
-
-        img = Image.new("L", (self.width, self.height), 255)
-        draw = ImageDraw.Draw(img)
-
-        font_header = self._load_cjk_font(20)
-        font_item = self._load_cjk_font(22)
-
-        # Header bar
-        header_height = 38
-        draw.rectangle([0, 0, self.width - 1, header_height], fill=0)
-        draw.text((12, 9), title, fill=255, font=font_header)
-
-        # Menu rows (4 deterministic rows)
-        row_top = header_height + 14
-        row_height = (self.height - row_top - 10) // 4
-        for index, label in enumerate(normalized):
-            y0 = row_top + index * row_height
-            y1 = y0 + row_height
-
-            # Row separator
-            if index > 0:
-                draw.line([(0, y0), (self.width - 1, y0)], fill=0, width=1)
-
-            # Highlight selected row with inverted background
-            if index == selected_index:
-                draw.rectangle([0, y0 + 1, self.width - 1, y1 - 1], fill=0)
-                text_fill = 255  # White text on black background
-                bullet_fill = 255
-                bullet_outline = 255
-            else:
-                text_fill = 0  # Black text on white background
-                bullet_fill = None  # Hollow bullet
-                bullet_outline = 0
-
-            # Draw bullet
-            bullet_cx = 22
-            bullet_cy = y0 + row_height // 2
-            if bullet_fill is not None:
-                draw.ellipse(
-                    [bullet_cx - 7, bullet_cy - 7, bullet_cx + 7, bullet_cy + 7],
-                    fill=bullet_fill,
-                    outline=bullet_outline,
-                    width=2,
-                )
-            else:
-                draw.ellipse(
-                    [bullet_cx - 7, bullet_cy - 7, bullet_cx + 7, bullet_cy + 7],
-                    outline=bullet_outline,
-                    width=2,
-                )
-
-            # Draw label
-            text_y = y0 + max(0, (row_height - 22) // 2)
-            draw.text((40, text_y), label, fill=text_fill, font=font_item)
-
-            # Keep final border deterministic
-            if index == 3:
-                draw.line([(0, y1), (self.width - 1, y1)], fill=0, width=1)
-
+        normalized = self._normalize_menu_entries(entries)
+        img = self._render_menu_canvas(normalized, title, selected_index=selected_index)
         return self._pack_to_bytes(img.convert("1"))
 
     def create_pattern(self, pattern_type: str = "checkerboard") -> bytes:

@@ -24,6 +24,7 @@ from config import (
     MENU_GESTURE_CONFIDENCE_THRESHOLD,
     MENU_NAV_SYNC_SETTLE_SECONDS,
     MENU_VICTORY_HOLD_SECONDS,
+    STEM_EXIT_HOLD_SECONDS,
     REMOTE_PREEMPT_COOLDOWN_SECONDS,
 )
 from local_ui.arbitration import ArbitrationController
@@ -73,6 +74,8 @@ class SphericalBot:
         self._tasks: list[asyncio.Task] = []
         self.bootstrap_state = BootstrapState()
         self._stem_session_active = False
+        self._stem_exit_hold_start: Optional[float] = None
+        self._stem_exit_requested = False
         self._throttled_log_timestamps: dict[str, float] = {}
 
     def _log_throttled(
@@ -259,6 +262,8 @@ class SphericalBot:
         from api.routes import QuizStartRequest, quiz_start
 
         self._stem_session_active = True
+        self._stem_exit_hold_start = None
+        self._stem_exit_requested = False
         logger.info("stem_session_started source=local_menu")
         await quiz_start(QuizStartRequest())
 
@@ -268,11 +273,17 @@ class SphericalBot:
             return
 
         self._stem_session_active = False
+        self._stem_exit_hold_start = None
+        self._stem_exit_requested = False
         logger.info("stem_session_finished source=quiz_engine")
 
         if self.menu_state is not None and hasattr(self.menu_state, "reset_after_external_session"):
             self.menu_state.reset_after_external_session()
             logger.info("menu_restored source=stem_exit")
+            # Force a prompt redraw back to the home menu after exiting STEM.
+            self._pending_display_update = True
+            self._last_nav_time = time.monotonic() - MENU_NAV_SYNC_SETTLE_SECONDS
+            logger.info("menu_restore.display_sync_requested source=stem_exit selected_index=%d", self.menu_state.selected_index)
 
     async def _handle_local_stem_commit(
         self,
@@ -504,13 +515,47 @@ class SphericalBot:
                                     gesture.confidence,
                                 )
 
-                        # Handle manual exit from STEM session via OPEN_PALM
-                        if gesture.gesture == Gesture.OPEN_PALM and (self._stem_session_active or quiz_active):
-                            logger.info("stem_session.exit_requested gesture=open_palm")
-                            from api.routes import quiz_stop
-                            # quiz_stop triggers _finalize_quiz_session -> _handle_stem_session_finished
-                            asyncio.create_task(quiz_stop())
-                            continue
+                        # Handle manual exit from STEM session via sustained OPEN_PALM.
+                        # Until the hold duration is reached, gestures continue to be
+                        # interpreted as quiz-answer input.
+                        if self._stem_session_active or quiz_active:
+                            if gesture.gesture == Gesture.OPEN_PALM:
+                                now = time.monotonic()
+                                if self._stem_exit_hold_start is None:
+                                    self._stem_exit_hold_start = now
+                                    self._log_throttled(
+                                        "stem.exit.hold_start",
+                                        0.5,
+                                        "stem_session.exit_hold_started gesture=open_palm required_seconds=%.2f",
+                                        STEM_EXIT_HOLD_SECONDS,
+                                    )
+                                elif not self._stem_exit_requested:
+                                    elapsed = now - self._stem_exit_hold_start
+                                    self._log_throttled(
+                                        "stem.exit.hold_progress",
+                                        0.5,
+                                        "stem_session.exit_hold_progress elapsed=%.2f required=%.2f",
+                                        elapsed,
+                                        STEM_EXIT_HOLD_SECONDS,
+                                    )
+                                    if elapsed >= STEM_EXIT_HOLD_SECONDS:
+                                        self._stem_exit_requested = True
+                                        logger.info("stem_session.exit_requested gesture=open_palm_hold elapsed=%.2f", elapsed)
+                                        from api.routes import quiz_stop
+                                        # quiz_stop triggers _finalize_quiz_session -> _handle_stem_session_finished
+                                        asyncio.create_task(quiz_stop())
+                                        continue
+                            else:
+                                if self._stem_exit_hold_start is not None and not self._stem_exit_requested:
+                                    elapsed = time.monotonic() - self._stem_exit_hold_start
+                                    self._log_throttled(
+                                        "stem.exit.hold_cancelled",
+                                        0.5,
+                                        "stem_session.exit_hold_cancelled elapsed=%.2f",
+                                        elapsed,
+                                    )
+                                if not self._stem_exit_requested:
+                                    self._stem_exit_hold_start = None
 
                         # Pass finger-count answers to quiz engine when a quiz is active.
                         if (self._stem_session_active or quiz_active) and finger_count >= 1:
