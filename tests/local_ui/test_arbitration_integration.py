@@ -154,11 +154,15 @@ def app_client(arbitration: ArbitrationController, menu: MenuStateMachine):
     return TestClient(app), serial
 
 
-def test_remote_movement_preempts_menu_during_inflight_command(
+@pytest.mark.asyncio
+async def test_remote_movement_preempts_menu_during_inflight_command(
     arbitration: ArbitrationController,
     menu: MenuStateMachine,
     caplog,
 ):
+    """Test that remote API calls preempt menu and release after grace period."""
+    import httpx
+    
     serial = BlockingSerialManager()
     set_app_state(
         serial_manager=serial,
@@ -167,34 +171,46 @@ def test_remote_movement_preempts_menu_during_inflight_command(
         arbitration=arbitration,
     )
     app = create_app()
-    client = TestClient(app)
     caplog.set_level("INFO")
 
-    result: dict[str, object] = {}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        # Start the move request in a task
+        async def _invoke_move():
+            response = await client.post(
+                "/api/movement/move",
+                json={"left_speed": 100, "right_speed": 100, "duration_ms": 10},
+            )
+            return response.status_code
 
-    def _invoke_move():
-        response = client.post(
-            "/api/movement/move",
-            json={"left_speed": 100, "right_speed": 100, "duration_ms": 10},
-        )
-        result["status_code"] = response.status_code
+        move_task = asyncio.create_task(_invoke_move())
 
-    worker = threading.Thread(target=_invoke_move)
-    worker.start()
+        # Give the request time to start and hit the blocking serial manager
+        await asyncio.sleep(0.1)
+        
+        # Wait for serial to be entered (command in progress) 
+        assert serial.entered.wait(timeout=1.0)
+        assert arbitration.is_local_allowed() is False
 
-    assert serial.entered.wait(timeout=1.0)
-    assert arbitration.is_local_allowed() is False
+        # Menu should block gestures during remote command
+        blocked = menu.handle_gesture(Gesture.THUMBS_UP, confidence=0.95)
+        assert blocked is False
+        assert menu.selected_index == 0
 
-    blocked = menu.handle_gesture(Gesture.THUMBS_UP, confidence=0.95)
-    assert blocked is False
-    assert menu.selected_index == 0
+        # Release serial to complete the command
+        serial.release.set()
+        status_code = await move_task
 
-    serial.release.set()
-    worker.join(timeout=1.0)
+        assert status_code == 200
 
-    assert result["status_code"] == 200
-    # Endpoint release should put arbitration into cooldown first.
-    assert arbitration.snapshot()["state"] in ("cooldown", "local")
+        # Endpoint schedules release with grace period - state is still remote immediately after
+        assert arbitration.snapshot()["state"] == "remote"
+
+        # Wait for grace period to complete (0.35s + margin)
+        await asyncio.sleep(0.5)
+
+        # After grace period, should be in cooldown or local
+        assert arbitration.snapshot()["state"] in ("cooldown", "local")
+    
     assert any(
         "api.preempt_remote endpoint=/api/movement/move reason=movement" in record.getMessage()
         for record in caplog.records
@@ -285,10 +301,14 @@ def test_force_local_endpoint_bypasses_cooldown(app_client, arbitration: Arbitra
     assert arbitration.is_local_allowed() is True
 
 
-def test_remote_command_failure_still_releases_to_cooldown(
+@pytest.mark.asyncio
+async def test_remote_command_failure_still_releases_to_cooldown(
     arbitration: ArbitrationController,
     menu: MenuStateMachine,
 ):
+    """Test that failed remote commands still release after grace period."""
+    import httpx
+    
     serial = FakeSerialManager(should_raise=True)
     set_app_state(
         serial_manager=serial,
@@ -297,16 +317,22 @@ def test_remote_command_failure_still_releases_to_cooldown(
         arbitration=arbitration,
     )
     app = create_app()
-    client = TestClient(app, raise_server_exceptions=False)
 
-    response = client.post(
-        "/api/movement/move",
-        json={"left_speed": 30, "right_speed": 30, "duration_ms": 50},
-    )
-    assert response.status_code == 500
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test") as client:
+        response = await client.post(
+            "/api/movement/move",
+            json={"left_speed": 30, "right_speed": 30, "duration_ms": 50},
+        )
+        assert response.status_code == 500
 
-    # Even on error, endpoint should have released REMOTE and entered cooldown.
-    assert arbitration.snapshot()["state"] in ("cooldown", "local")
+        # Even on error, endpoint schedules release with grace period
+        assert arbitration.snapshot()["state"] == "remote"
+
+        # Wait for grace period to complete (0.35s + margin)
+        await asyncio.sleep(0.5)
+
+        # After grace period, should have released REMOTE and entered cooldown.
+        assert arbitration.snapshot()["state"] in ("cooldown", "local")
 
 
 def test_preempt_near_cooldown_expiry_restarts_timer(menu: MenuStateMachine, arbitration: ArbitrationController):
@@ -328,7 +354,9 @@ def test_preempt_near_cooldown_expiry_restarts_timer(menu: MenuStateMachine, arb
     asyncio.run(_run())
 
 
-def test_preempt_displays_remote_notice_via_serial(ws_manager: FakeWebSocketManager):
+@pytest.mark.asyncio
+async def test_preempt_displays_remote_notice_via_serial(ws_manager: FakeWebSocketManager):
+    """Test that preempting local mode displays a remote active notice via serial."""
     serial = FakeSerialManager()
     arbitration = ArbitrationController(
         cooldown_seconds=0.05,
@@ -336,13 +364,15 @@ def test_preempt_displays_remote_notice_via_serial(ws_manager: FakeWebSocketMana
         image_processor=FakeImageProcessor(),
         ws_manager=ws_manager,
     )
-
-    async def _run():
-        changed = arbitration.preempt_local("movement")
-        assert changed is True
-        await asyncio.sleep(0)
-
-    asyncio.run(_run())
+    
+    # Enable remote active notice for this test
+    arbitration._remote_active_notice_enabled = True
+    
+    changed = arbitration.preempt_local("movement")
+    assert changed is True
+    
+    # Wait for async notice task to complete
+    await asyncio.sleep(0.1)
 
     assert serial.commands
     assert serial.commands[0]["kind"] == "display_image"
