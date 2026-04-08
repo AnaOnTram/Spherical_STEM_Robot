@@ -56,3 +56,9 @@ tmp/
 #test
 /tests/
 .bg-shell/
+
+# Local files
+scripts/
+main.py_fragment_revert.txt
+pytest.ini
+BOM.xlsx
