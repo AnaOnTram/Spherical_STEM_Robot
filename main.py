@@ -19,6 +19,14 @@ from config import (
     BOOTSTRAP_READINESS_TIMEOUT_SECONDS,
     BOOTSTRAP_RENDER_TIMEOUT_SECONDS,
     BOOTSTRAP_REQUIRED_COMPONENTS,
+    CHAT_RECORD_SECONDS,
+    CHAT_EMPTY_TRANSCRIPT_BACKOFF_SECONDS,
+    CHAT_EMPTY_TRANSCRIPT_MAX_RETRIES,
+    CHAT_TONE_ENTER,
+    CHAT_TONE_EXIT,
+    CHAT_TONE_LISTENING,
+    CHAT_TONE_PROCESSING,
+    CHAT_TONE_SETTLE_SECONDS,
     MENU_DEBOUNCE_FRAMES,
     MENU_DISPLAY_COOLDOWN_SECONDS,
     MENU_GESTURE_CONFIDENCE_THRESHOLD,
@@ -75,6 +83,8 @@ class SphericalBot:
         self.bootstrap_state = BootstrapState()
         self._stem_session_active = False
         self._chat_session_active = False
+        self._chat_exit_hold_start: Optional[float] = None
+        self._chat_exit_requested = False
         self._stem_exit_hold_start: Optional[float] = None
         self._stem_exit_requested = False
         self._throttled_log_timestamps: dict[str, float] = {}
@@ -314,6 +324,8 @@ class SphericalBot:
             return
 
         self._chat_session_active = False
+        self._chat_exit_hold_start = None
+        self._chat_exit_requested = False
         logger.info("chat_session_finished source=local_menu")
 
         if self.menu_state is not None and hasattr(self.menu_state, "reset_after_external_session"):
@@ -327,15 +339,143 @@ class SphericalBot:
             )
 
     async def _launch_local_chat(self) -> None:
-        """Run one local single-turn chat using the existing LLM chat service."""
-        from LLM_Chat.service import oral_chat_with_llm
+        """Run multi-turn chat session until OPEN_PALM exit gesture.
+
+        Flow per turn:
+            1. Listen — tone → settle → record voice
+            2. Process — ASR → LLM → TTS with phase audio cues
+            3. Speak  — play TTS response audio
+            4. Check exit flag → if set, break; else loop
+        Exit: OPEN_PALM hold detected by detection loop sets _chat_exit_requested.
+        """
+        import tempfile
+
+        from LLM_Chat.service import get_processing_audio_path, oral_chat_with_llm
 
         if not self.audio_recorder or not self.audio_recorder.is_recording:
             raise RuntimeError("Audio recorder not available")
 
-        record_seconds = 4.0
-        wav_data = await asyncio.to_thread(self.audio_recorder.record_audio, record_seconds)
-        await asyncio.to_thread(oral_chat_with_llm, wav_data)
+        self._chat_exit_hold_start = None
+        self._chat_exit_requested = False
+
+        # --- Entry feedback (once) ---
+        if self.audio_player:
+            self.audio_player.play_tone(*CHAT_TONE_ENTER)
+
+        # Fire-and-forget e-ink "Chat Mode" screen.
+        if self.image_processor and self.serial_manager:
+            try:
+                payload = await asyncio.to_thread(
+                    self.image_processor.render_chat_screen,
+                )
+                from esp_serial.commands import CommandBuilder
+
+                command = CommandBuilder.display_image(payload)
+                asyncio.create_task(self.serial_manager.send_command_async(command))
+            except Exception as exc:
+                logger.warning("chat.eink_entry_failed err=%s", exc)
+
+        session_id: str | None = None
+        turn = 0
+        empty_transcript_streak = 0
+        empty_transcript_limit = max(1, CHAT_EMPTY_TRANSCRIPT_MAX_RETRIES)
+
+        while not self._chat_exit_requested:
+            turn += 1
+            logger.info("chat.turn_start turn=%d", turn)
+
+            # --- Listening ---
+            await asyncio.sleep(CHAT_TONE_SETTLE_SECONDS)
+            if self.audio_player:
+                self.audio_player.play_tone(*CHAT_TONE_LISTENING)
+            await asyncio.sleep(CHAT_TONE_SETTLE_SECONDS)
+
+            # Check exit before blocking on recording
+            if self._chat_exit_requested:
+                break
+
+            wav_path = await asyncio.to_thread(
+                self.audio_recorder.record_to_file,
+                tempfile.mktemp(suffix=".wav"),
+                CHAT_RECORD_SECONDS,
+            )
+            with open(wav_path, "rb") as f:
+                wav_data = f.read()
+
+            if self._chat_exit_requested:
+                break
+
+            # --- Processing (ASR → LLM → TTS) ---
+            def _chat_phase_cb(phase: str) -> None:
+                logger.info("chat.phase turn=%d phase=%s", turn, phase)
+                if phase == "asr_done" and self.audio_player:
+                    proc_path = get_processing_audio_path()
+                    if proc_path:
+                        self.audio_player.play_file(proc_path)
+                    else:
+                        self.audio_player.play_tone(*CHAT_TONE_PROCESSING)
+
+            try:
+                result = await asyncio.to_thread(
+                    oral_chat_with_llm,
+                    wav_data,
+                    session_id=session_id,
+                    phase_callback=_chat_phase_cb,
+                )
+                session_id = result.session_id
+            except Exception as exc:
+                logger.error("chat.turn_error turn=%d err=%s", turn, exc)
+                # Don't crash the session — just retry next turn
+                continue
+
+            if self._chat_exit_requested:
+                break
+
+            # --- Empty transcript: skip this turn, listen again ---
+            if not result.transcript:
+                empty_transcript_streak += 1
+                logger.info(
+                    "chat.empty_transcript turn=%d streak=%d/%d — re-listening",
+                    turn,
+                    empty_transcript_streak,
+                    empty_transcript_limit,
+                )
+                if empty_transcript_streak >= empty_transcript_limit:
+                    logger.warning(
+                        "chat.session_exit reason=max_empty_transcripts_reached streak=%d limit=%d",
+                        empty_transcript_streak,
+                        empty_transcript_limit,
+                    )
+                    break
+                await asyncio.sleep(max(0.0, CHAT_EMPTY_TRANSCRIPT_BACKOFF_SECONDS))
+                continue
+            empty_transcript_streak = 0
+
+            # --- Play TTS response ---
+            if result.audio_path and self.audio_player:
+                logger.info(
+                    "chat.playing_response turn=%d path=%s text_len=%d elapsed_ms=%d",
+                    turn,
+                    result.audio_path,
+                    len(result.text),
+                    result.elapsed_ms,
+                )
+                await asyncio.to_thread(self.audio_player.play_file, result.audio_path, True)
+            elif result.text:
+                logger.warning("chat.no_audio_response turn=%d text=%s", turn, result.text[:80])
+
+            logger.info(
+                "chat.turn_complete turn=%d transcript=%s response_len=%d elapsed_ms=%d",
+                turn,
+                result.transcript,
+                len(result.text),
+                result.elapsed_ms,
+            )
+
+        # --- Session exit ---
+        if self.audio_player:
+            self.audio_player.play_tone(*CHAT_TONE_EXIT)
+        logger.info("chat.session_exit turns=%d", turn)
 
     async def _run_local_chat_session(
         self,
@@ -623,46 +763,49 @@ class SphericalBot:
                                     gesture.confidence,
                                 )
 
-                        # Handle manual exit from STEM session via sustained OPEN_PALM.
-                        # Until the hold duration is reached, gestures continue to be
-                        # interpreted as quiz-answer input.
-                        if self._stem_session_active or quiz_active:
+                        # Handle manual exit from STEM or Chat session via sustained OPEN_PALM.
+                        if self._stem_session_active or self._chat_session_active or quiz_active:
+                            _exit_already_requested = (
+                                self._stem_exit_requested or self._chat_exit_requested
+                            )
                             if gesture.gesture == Gesture.OPEN_PALM:
                                 now = time.monotonic()
                                 if self._stem_exit_hold_start is None:
                                     self._stem_exit_hold_start = now
                                     self._log_throttled(
-                                        "stem.exit.hold_start",
+                                        "session.exit.hold_start",
                                         0.5,
-                                        "stem_session.exit_hold_started gesture=open_palm required_seconds=%.2f",
+                                        "session.exit_hold_started gesture=open_palm required_seconds=%.2f",
                                         STEM_EXIT_HOLD_SECONDS,
                                     )
-                                elif not self._stem_exit_requested:
+                                elif not _exit_already_requested:
                                     elapsed = now - self._stem_exit_hold_start
                                     self._log_throttled(
-                                        "stem.exit.hold_progress",
+                                        "session.exit.hold_progress",
                                         0.5,
-                                        "stem_session.exit_hold_progress elapsed=%.2f required=%.2f",
+                                        "session.exit_hold_progress elapsed=%.2f required=%.2f",
                                         elapsed,
                                         STEM_EXIT_HOLD_SECONDS,
                                     )
                                     if elapsed >= STEM_EXIT_HOLD_SECONDS:
-                                        self._stem_exit_requested = True
-                                        logger.info("stem_session.exit_requested gesture=open_palm_hold elapsed=%.2f", elapsed)
-                                        from api.routes import quiz_stop
-                                        # quiz_stop triggers _finalize_quiz_session -> _handle_stem_session_finished
-                                        asyncio.create_task(quiz_stop())
+                                        if self._chat_session_active:
+                                            self._chat_exit_requested = True
+                                            logger.info("chat_session.exit_requested gesture=open_palm_hold elapsed=%.2f", elapsed)
+                                        else:
+                                            self._stem_exit_requested = True
+                                            logger.info("stem_session.exit_requested gesture=open_palm_hold elapsed=%.2f", elapsed)
+                                            from api.routes import quiz_stop
+                                            asyncio.create_task(quiz_stop())
                                         continue
                             else:
-                                if self._stem_exit_hold_start is not None and not self._stem_exit_requested:
-                                    elapsed = time.monotonic() - self._stem_exit_hold_start
+                                if self._stem_exit_hold_start is not None and not _exit_already_requested:
                                     self._log_throttled(
-                                        "stem.exit.hold_cancelled",
+                                        "session.exit.hold_cancelled",
                                         0.5,
-                                        "stem_session.exit_hold_cancelled elapsed=%.2f",
-                                        elapsed,
+                                        "session.exit_hold_cancelled elapsed=%.2f",
+                                        time.monotonic() - self._stem_exit_hold_start,
                                     )
-                                if not self._stem_exit_requested:
+                                if not _exit_already_requested:
                                     self._stem_exit_hold_start = None
 
                         # Pass finger-count answers to quiz engine when a quiz is active.

@@ -119,6 +119,17 @@ class TestVictoryHold:
         assert menu.state == MenuState.CONFIRMING
         assert result
 
+    def test_victory_does_not_request_navigation_refresh(self, menu):
+        # Reach NAVIGATING and clear the selection-change refresh request.
+        for _ in range(2):
+            menu.handle_gesture(Gesture.THUMBS_UP, confidence=0.9)
+        assert menu.consume_navigation_requested() is True
+
+        # Starting a Victory hold should not schedule a display refresh.
+        assert menu.handle_gesture(Gesture.PEACE, confidence=0.9)
+        assert menu.state == MenuState.CONFIRMING
+        assert menu.consume_navigation_requested() is False
+
     def test_victory_hold_commits_after_duration(self, menu):
         # Get to CONFIRMING
         for _ in range(2):

@@ -563,6 +563,67 @@ class EInkImageProcessor:
         img = self._render_menu_canvas(normalized, title, selected_index=selected_index)
         return self._pack_to_bytes(img.convert("1"))
 
+    def render_chat_screen(self) -> bytes:
+        """Render a static 'Chat Mode' screen for the e-ink display.
+
+        Shown once on chat entry. Audio cues handle real-time phase feedback
+        since e-ink refresh (2-4s) is too slow for per-stage updates.
+
+        Returns:
+            15000 bytes of 1-bit packed image data.
+        """
+        from PIL import Image, ImageDraw
+
+        img = Image.new("L", (self.width, self.height), 255)
+        draw = ImageDraw.Draw(img)
+
+        font_hdr = self._load_cjk_font(16)
+        font_title = self._load_cjk_font(28)
+        font_sub = self._load_cjk_font(18)
+
+        PAD = 10
+        HDR_H = 30
+
+        # Header bar (matches menu/lesson style)
+        draw.rectangle([0, 0, self.width - 1, HDR_H - 1], fill=0)
+        draw.text((PAD, (HDR_H - 18) // 2), "WonderBall Chat", fill=255, font=font_hdr)
+
+        # Centered speech bubble
+        cx, cy = self.width // 2, self.height // 2 - 15
+        bw, bh = 120, 70  # bubble dimensions
+        draw.rounded_rectangle(
+            [cx - bw // 2, cy - bh // 2, cx + bw // 2, cy + bh // 2],
+            radius=18,
+            outline=0,
+            width=3,
+        )
+        # Bubble tail
+        draw.polygon(
+            [(cx - 8, cy + bh // 2), (cx - 28, cy + bh // 2 + 28), (cx + 8, cy + bh // 2)],
+            fill=0,
+        )
+        # Dots inside bubble (typing indicator style)
+        dot_r = 6
+        dot_y = cy
+        for dx in (-24, 0, 24):
+            draw.ellipse(
+                [cx + dx - dot_r, dot_y - dot_r, cx + dx + dot_r, dot_y + dot_r],
+                fill=0,
+            )
+
+        # Instruction text
+        label = "Speak now..."
+        bbox = draw.textbbox((0, 0), label, font=font_title)
+        lw = bbox[2] - bbox[0]
+        draw.text(
+            ((self.width - lw) // 2, cy + bh // 2 + 40),
+            label,
+            fill=0,
+            font=font_title,
+        )
+
+        return self._pack_to_bytes(img.convert("1"))
+
     def create_pattern(self, pattern_type: str = "checkerboard") -> bytes:
         """Create test pattern for E-Ink display.
 

@@ -54,4 +54,5 @@ coverage/
 tmp/
 
 #test
+/tests/
 .bg-shell/

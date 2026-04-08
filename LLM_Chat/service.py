@@ -11,7 +11,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 import httpx
 import openai
@@ -38,6 +38,8 @@ _sessions: Dict[str, List[dict]] = {}
 _local_server_process: Optional[subprocess.Popen] = None
 _asr_process: Optional[subprocess.Popen] = None
 _tts_process: Optional[subprocess.Popen] = None
+_asr_service_ready = False
+_tts_service_ready = False
 
 # Cached path to the pre-generated "Processing. Please wait." audio file
 _PROCESSING_AUDIO_PATH = Path(tempfile.gettempdir()) / "spherical_bot_processing.wav"
@@ -86,6 +88,7 @@ def shutdown_all_services():
     bot.stop() in main.py.
     """
     global _local_server_process, _asr_process, _tts_process
+    global _asr_service_ready, _tts_service_ready
 
     print("[LLM Chat] Shutting down all services...")
     for proc, label in [
@@ -107,6 +110,8 @@ def shutdown_all_services():
     _local_server_process = None
     _asr_process = None
     _tts_process = None
+    _asr_service_ready = False
+    _tts_service_ready = False
     print("[LLM Chat] All services stopped.")
 
 
@@ -136,6 +141,15 @@ def _is_server_running(host: str = "127.0.0.1", port: int = 8080, timeout: float
     try:
         response = httpx.get(f"http://{host}:{port}/health", timeout=timeout)
         return response.status_code == 200
+    except Exception:
+        return False
+
+
+def _is_http_endpoint_reachable(url: str, timeout: float = 2.0) -> bool:
+    """Return True if host/port is reachable, regardless of endpoint status code."""
+    try:
+        httpx.get(url, timeout=timeout)
+        return True
     except Exception:
         return False
 
@@ -256,11 +270,8 @@ def _start_asr_service() -> bool:
     """
     global _asr_process
 
-    try:
-        httpx.get(config.LOCAL_ASR_URL.replace('/recognize', ''), timeout=2.0)
+    if _is_http_endpoint_reachable(config.LOCAL_ASR_URL.replace("/recognize", ""), timeout=2.0):
         return True
-    except Exception:
-        pass
 
     repo_root = Path(__file__).resolve().parent.parent
     asr_script = repo_root / "LLM_Chat" / "local" / "fast-whisper-host.py"
@@ -359,16 +370,22 @@ def _ensure_local_server():
 
 def _ensure_asr_tts_services():
     """Raise RuntimeError if ASR cannot start; warn (non-fatal) if TTS cannot start."""
-    try:
-        httpx.post(config.LOCAL_ASR_URL, json={"base64": ""}, timeout=2.0)
-    except Exception:
-        if not _start_asr_service():
+    global _asr_service_ready, _tts_service_ready
+
+    if not _asr_service_ready:
+        if _is_http_endpoint_reachable(config.LOCAL_ASR_URL.replace("/recognize", ""), timeout=2.0):
+            _asr_service_ready = True
+        elif _start_asr_service():
+            _asr_service_ready = True
+        else:
             raise RuntimeError("Failed to start ASR service")
 
-    try:
-        httpx.get(config.LOCAL_TTS_URL, timeout=2.0)
-    except Exception:
-        if not _start_tts_service():
+    if not _tts_service_ready:
+        if _is_http_endpoint_reachable(config.LOCAL_TTS_URL, timeout=2.0):
+            _tts_service_ready = True
+        elif _start_tts_service():
+            _tts_service_ready = True
+        else:
             print("[WARNING] TTS service not available — responses will be text only")
 
 
@@ -435,6 +452,7 @@ def oral_chat_with_llm(
     max_tokens: int = 512,
     temperature: float = 0.3,
     system_prompt: Optional[str] = None,
+    phase_callback: Optional[Callable[[str], None]] = None,
 ) -> LLMChatResult:
     """Conduct a spoken conversation with the local LLM.
 
@@ -464,6 +482,8 @@ def oral_chat_with_llm(
     messages = _sessions[session_id]
 
     # Step 1: ASR — spoken audio → text
+    if phase_callback:
+        phase_callback("asr_start")
     print("[DEBUG] Step 1: ASR with local Whisper...")
     try:
         encoded_audio = base64.b64encode(wav_data).decode("utf-8")
@@ -476,11 +496,25 @@ def oral_chat_with_llm(
         transcript = asr_response.json().get("recognition", "").strip()
         print(f"[DEBUG] ASR result: '{transcript}'")
         if not transcript:
-            raise RuntimeError("ASR returned empty transcript")
+            print("[DEBUG] ASR returned empty transcript — no speech detected")
+            elapsed_ms = int((time.time() - start_time) * 1000)
+            return LLMChatResult(
+                session_id=session_id,
+                text="",
+                transcript="",
+                audio_path=None,
+                provider="local-asr-llm-tts",
+                elapsed_ms=elapsed_ms,
+            )
     except Exception as e:
         raise RuntimeError(f"ASR failed: {e}")
 
+    if phase_callback:
+        phase_callback("asr_done")
+
     # Step 2: LLM — text → text response
+    if phase_callback:
+        phase_callback("llm_start")
     print("[DEBUG] Step 2: LLM inference...")
     if not messages or reset:
         sys_prompt = system_prompt or config.LLM_CHAT_TEXT_SYSTEM_PROMPT
@@ -539,6 +573,9 @@ def oral_chat_with_llm(
     except Exception as e:
         raise RuntimeError(f"LLM failed: {e}")
 
+    if phase_callback:
+        phase_callback("llm_done")
+
     # Step 3: TTS — text → spoken audio
     print("[DEBUG] Step 3: TTS with local Piper...")
     audio_path = synthesize_speech(text)
@@ -546,6 +583,9 @@ def oral_chat_with_llm(
         print(f"[DEBUG] TTS saved: {audio_path}")
     else:
         print("[WARNING] TTS produced no audio, returning text only")
+
+    if phase_callback:
+        phase_callback("tts_done")
 
     elapsed_ms = int((time.time() - start_time) * 1000)
 

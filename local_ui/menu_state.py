@@ -375,7 +375,6 @@ class MenuStateMachine:
     def _handle_victory(self) -> bool:
         if self._state == MenuState.IDLE:
             self._transition_to(MenuState.NAVIGATING)
-            self._navigation_requested = True
             return True
 
         if self._state not in (MenuState.NAVIGATING, MenuState.CONFIRMING):
@@ -387,7 +386,6 @@ class MenuStateMachine:
             if self._state == MenuState.NAVIGATING:
                 self._transition_to(MenuState.CONFIRMING)
             logger.debug("menu.victory_hold_start")
-            self._navigation_requested = True
             return True
 
         elapsed = now - self._victory_hold_start

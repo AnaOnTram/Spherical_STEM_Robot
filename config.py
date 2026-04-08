@@ -88,6 +88,21 @@ MENU_AUDIO_CUE_TEXT = "Confirmed"
 MENU_AUDIO_CUE_VOICE = "en-US-AriaNeural"
 MENU_AUDIO_CUE_PATH = "/tmp/menu_confirm.mp3"
 
+# Chat mode audio cue configuration
+# Tones: (frequency_hz, duration_seconds, volume)
+CHAT_TONE_ENTER = (880.0, 0.15, 0.4)        # High short chirp: entering chat
+CHAT_TONE_LISTENING = (660.0, 0.2, 0.35)    # Mid tone: listening now
+CHAT_TONE_PROCESSING = (440.0, 0.15, 0.3)   # Low short: processing
+CHAT_TONE_EXIT = (440.0, 0.1, 0.3)          # Brief low: session done
+CHAT_RECORD_SECONDS = 4.0                    # Voice capture duration
+CHAT_TONE_SETTLE_SECONDS = 0.3              # Pause after tone before mic starts
+CHAT_EMPTY_TRANSCRIPT_MAX_RETRIES = int(
+    os.getenv("CHAT_EMPTY_TRANSCRIPT_MAX_RETRIES", "4")
+)  # End chat loop after N consecutive silent turns
+CHAT_EMPTY_TRANSCRIPT_BACKOFF_SECONDS = float(
+    os.getenv("CHAT_EMPTY_TRANSCRIPT_BACKOFF_SECONDS", "0.35")
+)  # Small delay to avoid tight re-listen loops
+
 # STEM session exit gesture policy
 # OPEN_PALM must be held for this duration before exiting quiz mode.
 STEM_EXIT_HOLD_SECONDS = 2.0
